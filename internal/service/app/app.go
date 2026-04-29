@@ -10,6 +10,7 @@ import (
 
 	"moonbridge/internal/extension/pluginhooks"
 	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/foundation/db"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/bridge"
@@ -126,15 +127,32 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	logger.SetConsumeFunc(func(entries []logger.LogEntry) []logger.LogEntry {
 		return plugins.ConsumeGlobalLog(entries)
 	})
+
+	// Initialize persistence layer (db.Registry).
+	dbRegistry := db.NewRegistry(logger.L())
+	for _, p := range plugins.DBProviders() {
+		if prov := p.DBProvider(); prov != nil {
+			dbRegistry.RegisterProvider(prov)
+		}
+	}
+	for _, c := range plugins.DBConsumers() {
+		if cons := c.DBConsumer(); cons != nil {
+			dbRegistry.RegisterConsumer(cons)
+		}
+	}
+	if err := dbRegistry.Init(ctx, cfg.Persistence.ActiveProvider); err != nil {
+		return fmt.Errorf("init persistence: %w", err)
+	}
+	defer dbRegistry.Shutdown()
 	handler := server.New(server.Config{
-		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins)),
-		Provider:    fallbackProvider,
-		ProviderMgr: providerMgr,
-		Tracer:      tracer,
-		TraceErrors: errors,
-		Stats:       sessionStats,
+		Bridge:         bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins)),
+		Provider:       fallbackProvider,
+		ProviderMgr:    providerMgr,
+		Tracer:         tracer,
+		TraceErrors:    errors,
+		Stats:          sessionStats,
 		PluginRegistry: plugins,
-		AppConfig:   cfg,
+		AppConfig:      cfg,
 	})
 
 	return runHTTPServer(ctx, cfg.Addr, handler, errors, sessionStats)

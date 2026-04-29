@@ -8,6 +8,8 @@ import (
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
+
+	foundationdb "moonbridge/internal/foundation/db"
 )
 
 // --- Request pipeline capabilities ---
@@ -119,7 +121,6 @@ type ReasoningExtractor interface {
 	ExtractThinkingBlock(ctx *RequestContext, summary []openai.ReasoningItemSummary) (anthropic.ContentBlock, bool)
 }
 
-
 // --- Request completion hook ---
 
 // RequestResult carries per-request outcome data for post-request hooks.
@@ -150,6 +151,7 @@ type RequestCompletionHook interface {
 type RouteRegistrar interface {
 	RegisterRoutes(register func(pattern string, handler http.Handler))
 }
+
 // --- Log pipeline capabilities ---
 
 // LogConsumer is called during LogBuffer.Flush before entries are written.
@@ -157,4 +159,19 @@ type RouteRegistrar interface {
 // the original batch for output.
 type LogConsumer interface {
 	ConsumeLog(ctx *RequestContext, entries []logger.LogEntry) []logger.LogEntry
+}
+
+// --- Database capabilities ---
+
+// DBProvider is implemented by plugins that provide a database backend.
+// The returned Provider may be nil if the plugin is disabled or
+// unsupported in the current environment.
+type DBProvider interface {
+	DBProvider() foundationdb.Provider
+}
+
+// DBConsumer is implemented by plugins that need database persistence.
+// The returned Consumer may be nil if the plugin is disabled.
+type DBConsumer interface {
+	DBConsumer() foundationdb.Consumer
 }

@@ -15,6 +15,12 @@ server:
 
 trace_requests: false
 
+
+# Persistence layer: select active provider when multiple are enabled.
+# Leave empty to auto-select when only one is registered.
+persistence:
+  active_provider: db_sqlite
+
 extensions:
   deepseek_v4:
     config:
@@ -28,13 +34,28 @@ extensions:
       model: "kimi-for-coding"
       max_rounds: 4
       max_tokens: 2048
-  metrics:
+  # Database provider: SQLite
+  db_sqlite:
+    enabled: true
     config:
-      # Path to the SQLite database for per-request usage metrics persistence.
-      # When set, each request records model, token usage, cost, timing, and status.
-      # Relative paths are resolved from the current working directory.
-      # Leave empty (or omit) to disable metrics persistence.
-      # sqlite_path: "metrics.db"  # uncomment to enable
+      path: ./data/moonbridge.db
+      wal: true
+      busy_timeout_ms: 5000
+      max_open_conns: 1
+
+  # Database provider: Cloudflare D1 (Worker only)
+  # db_d1:
+  #   enabled: true
+  #   config:
+  #     binding: MOONBRIDGE_DB
+
+  # Persistence consumer: request metrics
+  metrics:
+    enabled: true
+    config:
+      default_limit: 100
+      max_limit: 1000
+
 
 provider:
   providers:

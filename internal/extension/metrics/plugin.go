@@ -1,135 +1,121 @@
 // Package metrics implements a Moon Bridge extension that persists per-request
-// usage metrics to a SQLite database for historical query and analysis.
+// usage metrics to a database via the foundation/db persistence layer.
 //
 // It implements:
-//   - RequestCompletionHook: records each request result to SQLite
-//   - RouteRegistrar: exposes query endpoints (e.g. GET /v1/admin/metrics)
+//   - DBConsumer: declares the request_metrics table schema
+//   - RequestCompletionHook: records each request result
+//   - RouteRegistrar: exposes GET /v1/admin/metrics
 //
-// Configuration (in extensions.metrics):
+// Configuration:
 //
 //	extensions:
 //	  metrics:
+//	    enabled: true
 //	    config:
-//	      sqlite_path: "metrics.db"   # relative to CWD, or absolute path
+//	      default_limit: 100
+//	      max_limit: 1000
 package metrics
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
-	"path/filepath"
-	"time"
 	"strconv"
+	"time"
 
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/service/metrics"
+	"moonbridge/internal/foundation/db"
 )
 
 const PluginName = "metrics"
 
 // Config holds the metrics extension configuration.
 type Config struct {
-	// SQLitePath is the path to the SQLite database file.
-	// If empty, metrics persistence is disabled.
-	// If relative, it is resolved relative to the current working directory.
-	SQLitePath string `json:"sqlite_path,omitempty" yaml:"sqlite_path"`
+	DefaultLimit int `json:"default_limit,omitempty" yaml:"default_limit"`
+	MaxLimit     int `json:"max_limit,omitempty" yaml:"max_limit"`
 }
 
-// Plugin implements the metrics extension, managing a SQLite-backed metrics
-// store lifecycle. It records per-request metrics and serves queries via
-// registered HTTP endpoints.
+// Plugin implements the metrics extension with DBConsumer for persistence.
 type Plugin struct {
 	plugin.BasePlugin
-	store *metrics.Store
-	appCfg config.Config
+
+	metricsStore        *Store
+	appCfg              config.Config
+	logger              *slog.Logger
+	persistenceDisabled bool
 }
 
-// NewPlugin creates a new metrics extension plugin.
 func NewPlugin() *Plugin {
 	return &Plugin{}
 }
 
 func (p *Plugin) Name() string { return PluginName }
 
-// ConfigSpecs returns the extension config spec for the metrics extension.
-func (p *Plugin) ConfigSpecs() []config.ExtensionConfigSpec {
-	return ConfigSpecs()
-}
+func (p *Plugin) ConfigSpecs() []config.ExtensionConfigSpec { return ConfigSpecs() }
 
-// ConfigSpecs returns the extension config spec for registration.
 func ConfigSpecs() []config.ExtensionConfigSpec {
 	return []config.ExtensionConfigSpec{{
 		Name: PluginName,
 		Scopes: []config.ExtensionScope{
 			config.ExtensionScopeGlobal,
 		},
-		Factory: func() any { return &Config{} },
+		DefaultEnabled: true,
+		Factory:        func() any { return &Config{} },
 	}}
 }
 
-
 func (p *Plugin) Init(ctx plugin.PluginContext) error {
-	cfg := plugin.Config[Config](ctx)
-	if cfg == nil || cfg.SQLitePath == "" {
-		if ctx.Logger != nil {
-			ctx.Logger.Info("指标持久化已禁用（未配置 sqlite_path）")
-		}
-		return nil
-	}
-	absPath, err := filepath.Abs(cfg.SQLitePath)
-	if err != nil {
-		return fmt.Errorf("解析 sqlite_path 失败: %w", err)
-	}
-	store, err := metrics.NewStore(absPath)
-	if err != nil {
-		return fmt.Errorf("初始化指标存储失败: %w", err)
-	}
-	p.store = store
 	p.appCfg = ctx.AppConfig
-	if ctx.Logger != nil {
-		ctx.Logger.Info("指标持久化已启用", "path", absPath)
-	}
+	p.logger = ctx.Logger
 	return nil
 }
 
-// Shutdown closes the SQLite store.
-func (p *Plugin) Shutdown() error {
-	if p.store != nil {
-		return p.store.Close()
-	}
-	return nil
-}
+func (p *Plugin) Shutdown() error { return nil }
 
-// EnabledForModel always returns true since metrics recording applies globally.
-// Respects extensions.metrics.enabled: false.
 func (p *Plugin) EnabledForModel(string) bool {
-	if p.store == nil {
-		return false
-	}
-	// Check global enabled flag: default to true if sqlite_path is set.
 	if !p.appCfg.ExtensionEnabled(PluginName, "") {
 		return false
 	}
-	return true
+	return !p.persistenceDisabled
 }
 
-// Store returns the underlying metrics store. Returns nil when disabled.
-func (p *Plugin) Store() *metrics.Store {
-	if p == nil {
+// --- DBConsumer ---
+
+func (p *Plugin) DBConsumer() db.Consumer {
+	if !p.appCfg.ExtensionEnabled(PluginName, "") {
 		return nil
 	}
-	return p.store
+	return p
+}
+
+func (p *Plugin) Tables() []db.TableSpec {
+	return []db.TableSpec{MetricsTable()}
+}
+
+func (p *Plugin) BindStore(s db.Store) error {
+	p.metricsStore = NewStore(s)
+	if p.logger != nil {
+		p.logger.Info("指标持久化已启用")
+	}
+	return nil
+}
+
+func (p *Plugin) DisablePersistence(reason error) {
+	p.persistenceDisabled = true
+	p.metricsStore = nil
+	if p.logger != nil {
+		p.logger.Error("指标持久化已禁用", "error", reason)
+	}
 }
 
 // --- RequestCompletionHook ---
 
-// OnRequestCompleted records the request result to SQLite.
 func (p *Plugin) OnRequestCompleted(_ *plugin.RequestContext, result plugin.RequestResult) {
-	if p.store == nil {
+	if p.metricsStore == nil {
 		return
 	}
-	r := metrics.Record{
+	r := Record{
 		Timestamp:     time.Now(),
 		Model:         result.Model,
 		ActualModel:   result.ActualModel,
@@ -142,36 +128,46 @@ func (p *Plugin) OnRequestCompleted(_ *plugin.RequestContext, result plugin.Requ
 		Status:        result.Status,
 		ErrorMessage:  result.ErrorMessage,
 	}
-	if err := p.store.Record(r); err != nil {
-		// No logger reference available here — silently drop for now.
+	if err := p.metricsStore.Record(r); err != nil && p.logger != nil {
+		p.logger.Error("写入指标记录失败", "error", err)
 	}
 }
 
 // --- RouteRegistrar ---
 
-// RegisterRoutes mounts the metrics query endpoints on the server mux.
 func (p *Plugin) RegisterRoutes(register func(pattern string, handler http.Handler)) {
-	if p.store == nil {
+	if p.metricsStore == nil {
 		return
 	}
 	register("GET /v1/admin/metrics", http.HandlerFunc(p.handleQuery))
 }
 
-// handleQuery serves GET /v1/admin/metrics — returns recent metrics as JSON.
 func (p *Plugin) handleQuery(w http.ResponseWriter, r *http.Request) {
-	if p.store == nil {
+	if p.metricsStore == nil {
 		http.Error(w, `{"error":"metrics disabled"}`, http.StatusNotFound)
 		return
 	}
 
-	limit := 100 // default
+	cfg := plugin.Config[Config](plugin.PluginContext{Config: p.appCfg.ExtensionConfig(PluginName, "")})
+	defaultLimit := 100
+	maxLimit := 1000
+	if cfg != nil {
+		if cfg.DefaultLimit > 0 {
+			defaultLimit = cfg.DefaultLimit
+		}
+		if cfg.MaxLimit > 0 {
+			maxLimit = cfg.MaxLimit
+		}
+	}
+
+	limit := defaultLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= maxLimit {
 			limit = parsed
 		}
 	}
 
-	opts := metrics.QueryOptions{Limit: limit, OrderAsc: false}
+	opts := QueryOptions{Limit: limit, OrderAsc: false}
 	if model := r.URL.Query().Get("model"); model != "" {
 		opts.Model = model
 	}
@@ -197,7 +193,7 @@ func (p *Plugin) handleQuery(w http.ResponseWriter, r *http.Request) {
 		opts.OrderAsc = true
 	}
 
-	records, err := p.store.Query(opts)
+	records, err := p.metricsStore.Query(opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -212,10 +208,10 @@ func (p *Plugin) handleQuery(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Compile-time interface checks.
 var (
 	_ plugin.Plugin                = (*Plugin)(nil)
 	_ plugin.ConfigSpecProvider    = (*Plugin)(nil)
 	_ plugin.RequestCompletionHook = (*Plugin)(nil)
 	_ plugin.RouteRegistrar        = (*Plugin)(nil)
+	_ plugin.DBConsumer            = (*Plugin)(nil)
 )

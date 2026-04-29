@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"moonbridge/internal/extension/codex"
+	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/extension/websearchinjected"
-	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/foundation/openai"
@@ -132,7 +132,6 @@ func (server *Server) listModels() []codex.ModelInfo {
 	return codex.BuildModelInfosFromConfig(server.appConfig)
 }
 
-
 // onRequestCompleted dispatches a RequestCompletionHook event to all enabled
 // plugins. No-op when the registry is nil or no plugins implement the hook.
 
@@ -238,10 +237,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, status, payload)
-	server.onRequestCompleted(
-		responsesRequest.Model, "", requestStart,
-		0, 0, 0, 0, 0, "error", payload.Error.Message,
-	)
+		server.onRequestCompleted(
+			responsesRequest.Model, "", requestStart,
+			0, 0, 0, 0, 0, "error", payload.Error.Message,
+		)
 		return
 	}
 
@@ -254,10 +253,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 			Type:    "server_error",
 			Code:    "provider_error",
 		}})
-	server.onRequestCompleted(
-		responsesRequest.Model, "", requestStart,
-		0, 0, 0, 0, 0, "error", fmt.Sprintf("no upstream provider: %s", responsesRequest.Model),
-	)
+		server.onRequestCompleted(
+			responsesRequest.Model, "", requestStart,
+			0, 0, 0, 0, 0, "error", fmt.Sprintf("no upstream provider: %s", responsesRequest.Model),
+		)
 		return
 	}
 
@@ -283,10 +282,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, status, payload)
-	server.onRequestCompleted(
-		responsesRequest.Model, anthropicRequest.Model, requestStart,
-		0, 0, 0, 0, 0, "error", payload.Error.Message,
-	)
+		server.onRequestCompleted(
+			responsesRequest.Model, anthropicRequest.Model, requestStart,
+			0, 0, 0, 0, 0, "error", payload.Error.Message,
+		)
 		return
 	}
 
@@ -310,7 +309,9 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		usage.InputTokens+usage.CacheCreationInputTokens+usage.CacheReadInputTokens,
 		usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens,
 		func() float64 {
-			if server.stats == nil { return 0 }
+			if server.stats == nil {
+				return 0
+			}
 			return server.stats.ComputeCost(responsesRequest.Model, stats.Usage{
 				InputTokens:              usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens,
 				OutputTokens:             usage.OutputTokens,
@@ -423,7 +424,9 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 		usage.InputTokens+usage.CacheCreationInputTokens+usage.CacheReadInputTokens,
 		usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens,
 		func() float64 {
-			if server.stats == nil { return 0 }
+			if server.stats == nil {
+				return 0
+			}
 			return server.stats.ComputeCost(responsesRequest.Model, stats.Usage{
 				InputTokens:              usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens,
 				OutputTokens:             usage.OutputTokens,
@@ -432,7 +435,9 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 			})
 		}(),
 		func() string {
-			if streamErr != "" { return "error" }
+			if streamErr != "" {
+				return "error"
+			}
 			return "success"
 		}(),
 		streamErr,

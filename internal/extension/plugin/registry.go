@@ -15,23 +15,25 @@ import (
 // Registry holds registered plugins and dispatches to their capabilities.
 // Capability lists are populated at registration time via type assertions.
 type Registry struct {
-	plugins            []Plugin
-	inputPreprocessors []InputPreprocessor
-	requestMutators    []RequestMutator
-	toolInjectors      []ToolInjector
-	messageRewriters   []MessageRewriter
-	providerWrappers   []ProviderWrapper
-	contentFilters     []ContentFilter
-	responsePostProcs  []ResponsePostProcessor
-	contentRememberers []ContentRememberer
-	streamInterceptors []StreamInterceptor
-	errorTransformers  []ErrorTransformer
-	sessionProviders   []SessionStateProvider
-	logConsumers       []LogConsumer
+	plugins                []Plugin
+	inputPreprocessors     []InputPreprocessor
+	requestMutators        []RequestMutator
+	toolInjectors          []ToolInjector
+	messageRewriters       []MessageRewriter
+	providerWrappers       []ProviderWrapper
+	contentFilters         []ContentFilter
+	responsePostProcs      []ResponsePostProcessor
+	contentRememberers     []ContentRememberer
+	streamInterceptors     []StreamInterceptor
+	errorTransformers      []ErrorTransformer
+	sessionProviders       []SessionStateProvider
+	logConsumers           []LogConsumer
+	dbProviders            []DBProvider
+	dbConsumers            []DBConsumer
 	requestCompletionHooks []RequestCompletionHook
-	routeRegistrars       []RouteRegistrar
-	configSpecs        []config.ExtensionConfigSpec
-	logger             *slog.Logger
+	routeRegistrars        []RouteRegistrar
+	configSpecs            []config.ExtensionConfigSpec
+	logger                 *slog.Logger
 }
 
 // NewRegistry creates an empty plugin registry.
@@ -89,6 +91,12 @@ func (r *Registry) Register(p Plugin) {
 	}
 	if v, ok := p.(LogConsumer); ok {
 		r.logConsumers = append(r.logConsumers, v)
+	}
+	if v, ok := p.(DBProvider); ok {
+		r.dbProviders = append(r.dbProviders, v)
+	}
+	if v, ok := p.(DBConsumer); ok {
+		r.dbConsumers = append(r.dbConsumers, v)
 	}
 	if v, ok := p.(RequestCompletionHook); ok {
 		r.requestCompletionHooks = append(r.requestCompletionHooks, v)
@@ -433,4 +441,32 @@ func (r *Registry) Plugin(name string) Plugin {
 		}
 	}
 	return nil
+}
+
+// DBProviders returns the list of enabled DB provider plugins (nil-filtered).
+func (r *Registry) DBProviders() []DBProvider {
+	if r == nil {
+		return nil
+	}
+	var result []DBProvider
+	for _, p := range r.dbProviders {
+		if prov := p.DBProvider(); prov != nil {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// DBConsumers returns the list of enabled DB consumer plugins (nil-filtered).
+func (r *Registry) DBConsumers() []DBConsumer {
+	if r == nil {
+		return nil
+	}
+	var result []DBConsumer
+	for _, p := range r.dbConsumers {
+		if c := p.DBConsumer(); c != nil {
+			result = append(result, p)
+		}
+	}
+	return result
 }
