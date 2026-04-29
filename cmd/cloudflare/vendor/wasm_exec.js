@@ -480,7 +480,7 @@ async run(instance, context) {
 					if (prop === 'context') {
 						return context;
 					}
-					return Reflect.get(target, prop, target);
+					return target[prop];
 				}
 			})
 			this._inst = instance;
