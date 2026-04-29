@@ -3,7 +3,6 @@
 package main
 
 import (
-	"log/slog"
 	"os"
 	"time"
 
@@ -24,14 +23,11 @@ import (
 )
 
 func main() {
-	logger.Init(logger.Config{Level: logger.LevelInfo, Format: "text", Output: os.Stderr})
-	logger.Info("[log] logger initialized")
-	slog.Info("[init] main() start")
 	start := time.Now()
 
 	rawConfig := cloudflare.Getenv("MOONBRIDGE_CONFIG")
 	if rawConfig == "" {
-		slog.Error("MOONBRIDGE_CONFIG environment variable is not set")
+		logger.Error("MOONBRIDGE_CONFIG environment variable is not set")
 		os.Exit(1)
 	}
 
@@ -39,13 +35,19 @@ func main() {
 		ExtensionSpecs: app.BuiltinExtensions().ConfigSpecs(),
 	})
 	if err != nil {
-		slog.Error("[init] parse config", "error", err)
+		logger.Error("[init] parse config", "error", err)
 		os.Exit(1)
 	}
 
-		slog.Info("[init] config loaded", "elapsed", time.Since(start))
+	logger.Init(logger.Config{
+		Level:  logger.Level(cfg.LogLevel),
+		Format: cfg.LogFormat,
+		Output: os.Stderr,
+	})
+	logger.Info("[init] main() start")
+	logger.Info("[init] config loaded", "elapsed", time.Since(start))
 	if cfg.AuthToken == "" && !isDevEnv() {
-		slog.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
+		logger.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
 			"或通过 wrangler secret put MOONBRIDGE_CONFIG 注入包含 auth_token 的配置")
 		os.Exit(1)
 	}
@@ -53,10 +55,10 @@ func main() {
 	// Build provider infrastructure.
 	providerDefs := buildProviderDefs(cfg)
 	modelRoutes := buildModelRoutes(cfg)
-	slog.Info("[init] provider defs built", "elapsed", time.Since(start))
+	logger.Info("[init] provider defs built", "elapsed", time.Since(start))
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
 	if err != nil {
-		slog.Error("init provider manager", "error", err)
+		logger.Error("init provider manager", "error", err)
 		os.Exit(1)
 	}
 
@@ -72,9 +74,9 @@ func main() {
 
 	// Register plugins.
 	plugins := app.BuiltinExtensions().NewRegistry(logger.L(), cfg)
-	slog.Info("[init] provider manager ready", "elapsed", time.Since(start))
+	logger.Info("[init] provider manager ready", "elapsed", time.Since(start))
 	if err := plugins.InitAll(&cfg); err != nil {
-		slog.Error("init plugins", "error", err)
+		logger.Error("init plugins", "error", err)
 		os.Exit(1)
 	}
 
@@ -82,7 +84,7 @@ func main() {
 		return plugins.ConsumeGlobalLog(entries)
 	})
 
-	slog.Info("[init] plugins initialized", "elapsed", time.Since(start))
+	logger.Info("[init] plugins initialized", "elapsed", time.Since(start))
 	handler := server.New(server.Config{
 		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins)),
 		Provider:    defaultClient,
@@ -91,7 +93,7 @@ func main() {
 		AppConfig:   cfg,
 	})
 
-	slog.Info("[init] server created, calling workers.Serve()", "elapsed", time.Since(start))
+	logger.Info("[init] server created, calling workers.Serve()", "elapsed", time.Since(start))
 	workers.Serve(handler)
 }
 
