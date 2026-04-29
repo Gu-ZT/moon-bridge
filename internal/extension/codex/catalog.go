@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/extension/visual"
 )
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
@@ -88,7 +89,9 @@ func BuildModelInfoFromRoute(alias string, ownedBy string, route config.RouteEnt
 	return newModelInfo(alias, displayName, route.Description, route.ContextWindow,
 		route.DefaultReasoningLevel, route.SupportedReasoningLevels,
 		route.SupportsReasoningSummaries, route.DefaultReasoningSummary,
-		route.BaseInstructions)
+		route.BaseInstructions,
+		inputModalitiesOrDefault(route.InputModalities),
+		route.SupportsImageDetailOriginal)
 }
 
 // BuildModelInfoFromProviderModel creates a Codex-compatible ModelInfo from a
@@ -107,7 +110,9 @@ func BuildModelInfoFromProviderModel(slug string, ownedBy string, meta config.Mo
 	return newModelInfo(slug, displayName, meta.Description, meta.ContextWindow,
 		meta.DefaultReasoningLevel, meta.SupportedReasoningLevels,
 		meta.SupportsReasoningSummaries, meta.DefaultReasoningSummary,
-		meta.BaseInstructions)
+		meta.BaseInstructions,
+		inputModalitiesOrDefault(meta.InputModalities),
+		meta.SupportsImageDetailOriginal)
 }
 
 // BuildModelInfosFromConfig returns Codex model catalog entries. Provider model
@@ -156,7 +161,32 @@ func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
 		models = append(models, BuildModelInfoFromRoute(alias, ownedBy, route))
 	}
 
+	models = injectVisualModalities(models, cfg)
 	return models
+}
+
+// injectVisualModalities ensures models with the visual extension enabled
+// include "image" in their input_modalities, so Codex knows to send image
+// content blocks — the visual orchestrator needs them to function.
+func injectVisualModalities(models []ModelInfo, cfg config.Config) []ModelInfo {
+	result := make([]ModelInfo, len(models))
+	copy(result, models)
+	for i, m := range result {
+		if !cfg.ExtensionEnabled(visual.PluginName, m.Slug) {
+			continue
+		}
+		hasImage := false
+		for _, mod := range m.InputModalities {
+			if mod == "image" {
+				hasImage = true
+				break
+			}
+		}
+		if !hasImage {
+			result[i].InputModalities = []string{"text", "image"}
+		}
+	}
+	return result
 }
 
 // newModelInfo builds a ModelInfo with all fields Codex requires.
@@ -168,6 +198,8 @@ func newModelInfo(
 	supportsReasoningSummaries bool,
 	defaultReasoningSummary string,
 	baseInstructions string,
+	inputModalities []string,
+	supportsImageDetailOriginal bool,
 ) ModelInfo {
 	var levels []ReasoningLevelPresetDTO
 	for _, p := range supportedLevels {
@@ -211,8 +243,16 @@ func newModelInfo(
 		MaxContextWindow:           maxCtxWin,
 		EffectiveContextWindowPct:  95,
 		ExperimentalSupportedTools: []string{},
-		InputModalities:            []string{"text"},
+		InputModalities:             inputModalities,
+		SupportsImageDetailOriginal: supportsImageDetailOriginal,
 	}
+}
+
+func inputModalitiesOrDefault(modalities []string) []string {
+	if len(modalities) == 0 {
+		return []string{"text"}
+	}
+	return modalities
 }
 
 func truncationPolicyForModel(string) TruncationPolicyConfig {

@@ -68,6 +68,8 @@ type ProviderModelFileConfig struct {
 	SupportedReasoningLevels   []ReasoningLevelPresetFileConfig `yaml:"supported_reasoning_levels" json:"supported_reasoning_levels,omitempty"`
 	SupportsReasoningSummaries *bool                            `yaml:"supports_reasoning_summaries" json:"supports_reasoning_summaries,omitempty"`
 	DefaultReasoningSummary    string                           `yaml:"default_reasoning_summary" json:"default_reasoning_summary,omitempty"`
+	InputModalities                []string                         `yaml:"input_modalities" json:"input_modalities,omitempty"`
+	SupportsImageDetailOriginal    *bool                            `yaml:"supports_image_detail_original" json:"supports_image_detail_original,omitempty"`
 	WebSearch                  WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
 	Extensions                 map[string]ExtensionFileConfig   `yaml:"extensions" json:"extensions,omitempty"`
 }
@@ -459,6 +461,8 @@ func buildRoutes(rawRoutes map[string]RouteFileConfig, providerDefs map[string]P
 				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 				entry.WebSearch = meta.WebSearch
+				entry.InputModalities = meta.InputModalities
+				entry.SupportsImageDetailOriginal = meta.SupportsImageDetailOriginal
 			}
 		}
 		routes[trimmedAlias] = entry
@@ -513,6 +517,8 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, spec
 				SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
 				DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
 				Extensions:                 modelExtensions,
+				InputModalities:             m.InputModalities,
+				SupportsImageDetailOriginal: boolOrDefault(m.SupportsImageDetailOriginal, false),
 			}
 			// Parse model-level web_search config.
 			if m.WebSearch.Support != "" {
