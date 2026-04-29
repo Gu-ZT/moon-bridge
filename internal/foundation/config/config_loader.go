@@ -20,6 +20,7 @@ type FileConfig struct {
 	Cache         CacheFileConfig                `yaml:"cache" json:"cache,omitempty"`
 	SystemPrompt  string                         `yaml:"system_prompt" json:"system_prompt,omitempty"`
 	Developer     DeveloperFileConfig            `yaml:"developer" json:"developer,omitempty"`
+	Persistence   PersistenceFileConfig          `yaml:"persistence" json:"persistence,omitempty"`
 	Extensions    map[string]ExtensionFileConfig `yaml:"extensions" json:"extensions,omitempty"`
 }
 
@@ -148,6 +149,10 @@ type ProxyProviderFileConfig struct {
 	Version string `yaml:"version" json:"version,omitempty"`
 }
 
+type PersistenceFileConfig struct {
+	ActiveProvider string `yaml:"active_provider" json:"active_provider,omitempty"`
+}
+
 type LogFileConfig struct {
 	Level  string `yaml:"level" json:"level,omitempty"`
 	Format string `yaml:"format" json:"format,omitempty"`
@@ -273,6 +278,7 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		Routes:            routes,
 		ProviderDefs:      providerDefs,
 		Cache:             fromCacheFileConfig(fileConfig.Cache),
+		Persistence:       FromPersistenceFileConfig(fileConfig.Persistence),
 		ResponseProxy:     FromResponseProxyFileConfig(fileConfig.Developer.Proxy.Response),
 		AnthropicProxy:    FromAnthropicProxyFileConfig(fileConfig.Developer.Proxy.Anthropic),
 		Extensions:        topExtensions,
@@ -328,6 +334,12 @@ func FromResponseProxyFileConfig(fileConfig ProxyFileConfig) ResponseProxyConfig
 		Model:           strings.TrimSpace(fileConfig.Model),
 		ProviderBaseURL: strings.TrimRight(strings.TrimSpace(fileConfig.Provider.BaseURL), "/"),
 		ProviderAPIKey:  strings.TrimSpace(fileConfig.Provider.APIKey),
+	}
+}
+
+func FromPersistenceFileConfig(fileConfig PersistenceFileConfig) PersistenceConfig {
+	return PersistenceConfig{
+		ActiveProvider: strings.TrimSpace(fileConfig.ActiveProvider),
 	}
 }
 

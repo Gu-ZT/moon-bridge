@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"moonbridge/internal/extension/codex"
+	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/extension/websearchinjected"
 	"moonbridge/internal/foundation/config"
@@ -40,6 +41,7 @@ type Config struct {
 	Tracer           *mbtrace.Tracer
 	TraceErrors      io.Writer
 	Stats            *stats.SessionStats
+	PluginRegistry   *plugin.Registry
 	AppConfig        config.Config // full app config for per-provider resolution
 }
 
@@ -51,6 +53,7 @@ type Server struct {
 	tracer           *mbtrace.Tracer
 	traceErrors      io.Writer
 	stats            *stats.SessionStats
+	pluginRegistry   *plugin.Registry
 	mux              *http.ServeMux
 	sessionsMu       sync.Mutex
 	sessions         map[string]serverSession
@@ -75,6 +78,7 @@ func New(cfg Config) *Server {
 		tracer:           cfg.Tracer,
 		traceErrors:      cfg.TraceErrors,
 		stats:            cfg.Stats,
+		pluginRegistry:   cfg.PluginRegistry,
 		mux:              http.NewServeMux(),
 		sessions:         map[string]serverSession{},
 		sessionPruneStop: make(chan struct{}),
@@ -85,6 +89,7 @@ func New(cfg Config) *Server {
 	server.mux.HandleFunc("/v1/models", server.handleModels)
 	server.mux.HandleFunc("/models", server.handleModels)
 	go server.startSessionPruning()
+	server.registerPluginRoutes()
 	return server
 }
 
@@ -127,9 +132,47 @@ func (server *Server) listModels() []codex.ModelInfo {
 	return codex.BuildModelInfosFromConfig(server.appConfig)
 }
 
+// onRequestCompleted dispatches a RequestCompletionHook event to all enabled
+// plugins. No-op when the registry is nil or no plugins implement the hook.
+
+// Only called after the request model is known (JSON parse succeeded).
+// Early errors (bad method, read failure, decode failure) are not recorded.
+func (server *Server) onRequestCompleted(model, actualModel string, startTime time.Time, inputTokens, outputTokens, cacheCreation, cacheRead int, cost float64, status, errMsg string) {
+	if server.pluginRegistry == nil {
+		return
+	}
+	server.pluginRegistry.OnRequestCompleted(
+		&plugin.RequestContext{ModelAlias: model},
+		plugin.RequestResult{
+			Model:         model,
+			ActualModel:   actualModel,
+			InputTokens:   inputTokens,
+			OutputTokens:  outputTokens,
+			CacheCreation: cacheCreation,
+			CacheRead:     cacheRead,
+			Cost:          cost,
+			Duration:      time.Since(startTime),
+			Status:        status,
+			ErrorMessage:  errMsg,
+		},
+	)
+}
+
+// registerPluginRoutes gives each RouteRegistrar plugin the opportunity to
+// mount HTTP handlers on the server mux.
+func (server *Server) registerPluginRoutes() {
+	if server.pluginRegistry == nil {
+		return
+	}
+	server.pluginRegistry.RegisterRoutes(func(pattern string, handler http.Handler) {
+		server.mux.Handle(pattern, handler)
+	})
+}
+
 func (server *Server) handleResponses(writer http.ResponseWriter, request *http.Request) {
 	log := logger.L().With("path", request.URL.Path, "method", request.Method, "remote", request.RemoteAddr)
 	log.Debug("收到请求")
+	requestStart := time.Now()
 	if request.Method != http.MethodPost {
 		log.Warn("方法不允许", "method", request.Method)
 		writeOpenAIError(writer, http.StatusMethodNotAllowed, openai.ErrorResponse{Error: openai.ErrorObject{
@@ -194,6 +237,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, status, payload)
+		server.onRequestCompleted(
+			responsesRequest.Model, "", requestStart,
+			0, 0, 0, 0, 0, "error", payload.Error.Message,
+		)
 		return
 	}
 
@@ -206,6 +253,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 			Type:    "server_error",
 			Code:    "provider_error",
 		}})
+		server.onRequestCompleted(
+			responsesRequest.Model, "", requestStart,
+			0, 0, 0, 0, 0, "error", fmt.Sprintf("no upstream provider: %s", responsesRequest.Model),
+		)
 		return
 	}
 
@@ -231,6 +282,10 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, status, payload)
+		server.onRequestCompleted(
+			responsesRequest.Model, anthropicRequest.Model, requestStart,
+			0, 0, 0, 0, 0, "error", payload.Error.Message,
+		)
 		return
 	}
 
@@ -249,11 +304,29 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	record.OpenAIResponse = openAIResponse
 	server.writeTrace(record)
 	writeJSON(writer, http.StatusOK, openAIResponse)
+	server.onRequestCompleted(
+		responsesRequest.Model, anthropicRequest.Model, requestStart,
+		usage.InputTokens+usage.CacheCreationInputTokens+usage.CacheReadInputTokens,
+		usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens,
+		func() float64 {
+			if server.stats == nil {
+				return 0
+			}
+			return server.stats.ComputeCost(responsesRequest.Model, stats.Usage{
+				InputTokens:              usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens,
+				OutputTokens:             usage.OutputTokens,
+				CacheCreationInputTokens: usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     usage.CacheReadInputTokens,
+			})
+		}(),
+		"success", "",
+	)
 }
 
 func (server *Server) handleStream(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, anthropicRequest anthropic.MessageRequest, plan cache.CacheCreationPlan, record mbtrace.Record, context codex.ConversionContext, sess *session.Session, provider Provider) {
 	log := logger.L().With("model", responsesRequest.Model)
 	log.Debug("开始流式传输")
+	streamStart := time.Now()
 	server.bridge.MarkCacheAttempt(plan)
 	stream, err := provider.StreamMessage(request.Context(), anthropicRequest)
 	if err != nil {
@@ -270,6 +343,10 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, status, payload)
+		server.onRequestCompleted(
+			responsesRequest.Model, anthropicRequest.Model, streamStart,
+			0, 0, 0, 0, 0, "error", payload.Error.Message,
+		)
 		server.bridge.ResetCacheWarming(plan)
 		logger.Flush()
 		return
@@ -281,6 +358,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 	writer.WriteHeader(http.StatusOK)
 
 	var events []anthropic.StreamEvent
+	var streamErr string
 	for {
 		event, err := stream.Next()
 		if err == io.EOF {
@@ -290,6 +368,7 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 			events = append(events, anthropic.StreamEvent{Type: "error", Error: &anthropic.ErrorObject{Type: "provider_stream_error", Message: err.Error()}})
 			record.Error = traceError("provider_stream_next", err)
 			log.Error("流式读取错误", "error", err)
+			streamErr = err.Error()
 			break
 		}
 		events = append(events, event)
@@ -340,6 +419,29 @@ func (server *Server) handleStream(writer http.ResponseWriter, request *http.Req
 		CacheCreationInputTokens: usage.CacheCreationInputTokens,
 		CacheReadInputTokens:     usage.CacheReadInputTokens,
 	}, usage.InputTokens)
+	server.onRequestCompleted(
+		responsesRequest.Model, anthropicRequest.Model, streamStart,
+		usage.InputTokens+usage.CacheCreationInputTokens+usage.CacheReadInputTokens,
+		usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens,
+		func() float64 {
+			if server.stats == nil {
+				return 0
+			}
+			return server.stats.ComputeCost(responsesRequest.Model, stats.Usage{
+				InputTokens:              usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens,
+				OutputTokens:             usage.OutputTokens,
+				CacheCreationInputTokens: usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     usage.CacheReadInputTokens,
+			})
+		}(),
+		func() string {
+			if streamErr != "" {
+				return "error"
+			}
+			return "success"
+		}(),
+		streamErr,
+	)
 }
 
 // resolveProvider selects the correct Provider for a given model alias.
@@ -480,6 +582,16 @@ func (w *anthropicClientWrapper) StreamMessage(ctx context.Context, request anth
 // handleOpenAIResponse proxies a request directly to an OpenAI Responses upstream
 // without Anthropic protocol conversion. It handles both streaming and non-streaming.
 func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, providerKey string, record mbtrace.Record) {
+	proxyStart := time.Now()
+	var hookErr string
+	defer func() {
+		if hookErr != "" {
+			server.onRequestCompleted(
+				responsesRequest.Model, "", proxyStart,
+				0, 0, 0, 0, 0, "error", hookErr,
+			)
+		}
+	}()
 	log := logger.L().With("path", request.URL.Path, "method", request.Method)
 	if server.providerMgr == nil {
 		log.Error("未配置 OpenAI Responses 直通的提供商管理器")
@@ -492,6 +604,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusBadGateway, payload)
+		hookErr = "provider manager not configured"
 		return
 	}
 
@@ -512,6 +625,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		record.Error = map[string]string{"stage": "openai_provider_config", "message": "missing base_url"}
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
+		hookErr = "missing base_url"
 		writeOpenAIError(writer, http.StatusBadGateway, payload)
 		return
 	}
@@ -540,6 +654,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		}}
 		record.Error = traceError("encode_openai_upstream_request", err)
 		record.OpenAIResponse = payload
+		hookErr = "encode upstream request"
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusInternalServerError, payload)
 		return
@@ -555,6 +670,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 			Code:    "internal_error",
 		}}
 		record.Error = traceError("create_openai_upstream_request", err)
+		hookErr = "create upstream request"
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusBadGateway, payload)
@@ -582,6 +698,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 			Type:    "server_error",
 			Code:    "provider_error",
 		}}
+		hookErr = err.Error()
 		record.Error = traceError("openai_upstream", err)
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
@@ -608,6 +725,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		target = io.MultiWriter(writer, &captured)
 	}
 	if _, err := io.Copy(target, upstreamResp.Body); err != nil {
+		hookErr = "copy upstream response"
 		log.Error("复制上游响应失败", "error", err)
 		return
 	}
@@ -616,12 +734,35 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		record.OpenAIResponse = mbtrace.RawJSONOrString(captured.Bytes())
 		server.writeTrace(record)
 	}
+
+	// Capture usage for metrics recording, even when stats recording is disabled.
+	var metricUsage stats.Usage
 	if statsEnabled {
-		if usage, ok := openAIUsageFromResponse(captured.Bytes(), responsesRequest.Stream); ok {
-			server.stats.Record(responsesRequest.Model, upstreamRequest.Model, usage)
-			logUsageLine(responsesRequest.Model, upstreamRequest.Model, usage, server.stats)
+		if u, ok := openAIUsageFromResponse(captured.Bytes(), responsesRequest.Stream); ok {
+			metricUsage = u
+			server.stats.Record(responsesRequest.Model, upstreamRequest.Model, u)
+			logUsageLine(responsesRequest.Model, upstreamRequest.Model, u, server.stats)
 		}
 	}
+
+	// Record metrics via plugin hooks.
+	status := "success"
+	errMsg := ""
+	if upstreamResp.StatusCode < 200 || upstreamResp.StatusCode >= 300 {
+		status = "error"
+		errMsg = fmt.Sprintf("HTTP %d", upstreamResp.StatusCode)
+	}
+	cost := float64(0)
+	if server.stats != nil {
+		cost = server.stats.ComputeCost(responsesRequest.Model, metricUsage)
+	}
+	server.onRequestCompleted(
+		responsesRequest.Model, upstreamRequest.Model, proxyStart,
+		int(metricUsage.InputTokens), int(metricUsage.OutputTokens),
+		int(metricUsage.CacheCreationInputTokens), int(metricUsage.CacheReadInputTokens),
+		cost, status, errMsg,
+	)
+
 }
 
 func logUsageLine(requestModel, actualModel string, usage stats.Usage, sessionStats *stats.SessionStats) {
