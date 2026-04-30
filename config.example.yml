@@ -170,7 +170,7 @@ provider:
 
   routes:
     # Optional aliases. Provider models are listed directly in the Codex catalog
-    # as provider/upstream_model; routes only add friendly fallback names.
+    # as model(provider) format; routes only add friendly fallback names.
     moonbridge:
       to: "deepseek/deepseek-v4-pro"
     gpt-image:

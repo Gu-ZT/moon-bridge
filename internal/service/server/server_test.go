@@ -457,7 +457,7 @@ func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *t
 	for _, model := range models {
 		slugs = append(slugs, model.Slug)
 	}
-	want := []string{"model-a(p1)", "p1/model-a", "model-b(p1)", "p1/model-b", "model-c(p2)", "p2/model-c", "alias-a"}
+	want := []string{"model-a(p1)", "model-b(p1)", "model-c(p2)", "alias-a", "p1/model-a"}
 	if strings.Join(slugs, ",") != strings.Join(want, ",") {
 		t.Fatalf("slugs = %v, want %v", slugs, want)
 	}

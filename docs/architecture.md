@@ -235,7 +235,7 @@ Moon Bridge 支持多提供商和多模型路由。配置通过 `provider.provid
 - 流式：设置 SSE 头后调用 Provider `StreamMessage()` → 收集所有 SSE 事件 → `Bridge.ConvertStreamEventsWithContext()` 批量转换 → 写入 SSE 流。服务端不再生成 synthetic commentary preamble，避免旧等待提示出现在 UI 或被后续 resume 带回上下文；历史中已存在的 `phase: "commentary"` 消息会在请求转换时跳过。
 - Anthropic 转换路径和 OpenAI Responses 直通路径的请求/响应都会经 trace 系统记录，成功和错误场景均写入 trace。
 - 成功请求输出可读 Usage 行，模型名使用实际发往上游的模型名，Billing 使用 session 累计费用。
-- `/v1/models` 端点返回 Codex `ModelsResponse` 格式（`{"models": [...]}`）。Provider 下声明的 `models` 是主数据源，会以 `provider/upstream_model` 形式完整写入；`routes` 只作为后置 fallback alias 补充。每个 `ModelInfo` 包含 Codex 反序列化所需的全部字段（`slug`、`shell_type`、`visibility`、`truncation_policy`、`supported_reasoning_levels` 等）。`truncation_policy` 使用非零默认 token limit，避免 Codex unified_exec 工具输出预算被夹成 0 后只返回 `…N tokens truncated…`。
+- `/v1/models` 端点返回 Codex `ModelsResponse` 格式（`{"models": [...]}`）。Provider 下声明的 `models` 是主数据源，会以 `model(provider)` 格式写入；`routes` 只作为后置 fallback alias 补充。每个 `ModelInfo` 包含 Codex 反序列化所需的全部字段（`slug`、`shell_type`、`visibility`、`truncation_policy`、`supported_reasoning_levels` 等）。`truncation_policy` 使用非零默认 token limit，避免 Codex unified_exec 工具输出预算被夹成 0 后只返回 `…N tokens truncated…`。
 - 错误处理分两层：
   - Bridge 层返回的 `RequestError` 直接转为 OpenAI 错误格式。
   - Anthropic Provider 错误通过 `ProviderError.OpenAIStatus()` 映射为等价 HTTP 状态码。
