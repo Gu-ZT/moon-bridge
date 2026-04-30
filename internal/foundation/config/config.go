@@ -11,10 +11,9 @@ const (
 	DefaultConfigFileName = "config.yml"
 	// DefaultConfigPath is kept for callers that need the config file name.
 	// Use XDGDefaultConfigPath to resolve the CLI's default config location.
-	DefaultConfigPath          = DefaultConfigFileName
-	DefaultPluginConfigDirName = "plugins"
-	AppConfigDirName           = "moonbridge"
-	DefaultAddr                = "127.0.0.1:38440"
+	DefaultConfigPath = DefaultConfigFileName
+	AppConfigDirName  = "moonbridge"
+	DefaultAddr       = "127.0.0.1:38440"
 )
 
 const (
@@ -72,9 +71,9 @@ type Config struct {
 	Routes         map[string]RouteEntry
 	ProviderDefs   map[string]ProviderDef
 	Cache          CacheConfig
+	Persistence    PersistenceConfig
 	ResponseProxy  ResponseProxyConfig
 	AnthropicProxy AnthropicProxyConfig
-	Plugins        map[string]map[string]any
 	Extensions     map[string]ExtensionSettings
 
 	extensionSpecs extensionSpecIndex
@@ -99,6 +98,12 @@ type RouteEntry struct {
 	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary    string
+	// InputModalities lists accepted input modalities ("text", "image", etc.)
+	// for the Codex models_catalog. If empty, defaults to ["text"].
+	InputModalities []string
+	// SupportsImageDetailOriginal indicates whether the model supports original
+	// (non-compressed) image detail in the Codex models_catalog.
+	SupportsImageDetailOriginal bool
 	// WebSearch holds route-level web search config (overrides model and provider-level).
 	WebSearch  WebSearchConfig
 	Extensions map[string]ExtensionSettings
@@ -138,6 +143,12 @@ type ModelMeta struct {
 	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary    string
+	// InputModalities lists accepted input modalities ("text", "image", etc.)
+	// for the Codex models_catalog.
+	InputModalities []string
+	// SupportsImageDetailOriginal indicates whether the model supports original
+	// (non-compressed) image detail.
+	SupportsImageDetailOriginal bool
 	// WebSearch holds model-level web search config (overrides provider-level).
 	WebSearch  WebSearchConfig
 	Extensions map[string]ExtensionSettings
@@ -160,6 +171,11 @@ type AnthropicProxyConfig struct {
 type ReasoningLevelPreset struct {
 	Effort      string
 	Description string
+}
+
+// PersistenceConfig holds the persistence layer configuration.
+type PersistenceConfig struct {
+	ActiveProvider string
 }
 
 type CacheConfig struct {
@@ -345,6 +361,8 @@ func (cfg Config) RouteFor(model string) RouteEntry {
 				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 				entry.BaseInstructions = meta.BaseInstructions
+				entry.InputModalities = meta.InputModalities
+				entry.SupportsImageDetailOriginal = meta.SupportsImageDetailOriginal
 				entry.WebSearch = meta.WebSearch
 				entry.Extensions = meta.Extensions
 			}
@@ -588,14 +606,6 @@ func boolOrDefault(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
-}
-
-// PluginConfig returns the configuration for a named plugin.
-func (cfg Config) PluginConfig(name string) map[string]any {
-	if cfg.Plugins == nil {
-		return nil
-	}
-	return cfg.Plugins[name]
 }
 
 func (cfg Config) validateExtensions() error {

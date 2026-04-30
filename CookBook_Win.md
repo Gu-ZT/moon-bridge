@@ -1,6 +1,6 @@
-# Moon Bridge CookBook
+# Moon Bridge CookBook (Windows 版)
 
-> 按目标找做法的菜谱集。每道菜包含食材、步骤、验证方法和排错。
+> **重要提示** Windows默认不自带XDG_CONFIG_HOME环境变量，请携带 `-config 你的config.yml路径` 启动
 
 ---
 
@@ -30,9 +30,9 @@
 
 **验证：**
 
-```bash
+```powershell
 go version
-# go version go1.26.0 linux/amd64
+# go version go1.26.0 windows/amd64
 ```
 
 **搞不定：**
@@ -58,6 +58,10 @@ go version
 
 项目根目录下创建 `config.yml`，只改 `api_key`：
 
+```powershell
+Copy-Item .\config.example.yml .\config.yml
+```
+
 ```yaml
 mode: "Transform"
 
@@ -81,7 +85,7 @@ provider:
 
 ### 1.2 启动
 
-```bash
+```powershell
 go run ./cmd/moonbridge
 ```
 
@@ -89,14 +93,16 @@ go run ./cmd/moonbridge
 
 ### 1.3 测试
 
-```bash
-curl http://localhost:38440/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "moonbridge",
-    "input": "你好，用一句话介绍一下自己。",
-    "max_output_tokens": 100
-  }'
+```powershell
+$body = @{
+    model = "moonbridge"
+    input = "你好，用一句话介绍一下自己。"
+    max_output_tokens = 100
+} | ConvertTo-Json
+Invoke-RestMethod -Uri http://localhost:38440/v1/responses `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
 **验证：** 返回 `"status": "completed"` 并包含回复内容。
@@ -126,20 +132,20 @@ curl http://localhost:38440/v1/responses \
 
 Moon Bridge 自带 Codex 配置生成器。先确认它在运行：
 
-```bash
-curl -s http://localhost:38440/v1/models | head -3
+```powershell
+Invoke-RestMethod -Uri http://localhost:38440/v1/models | Select-Object -First 3
 ```
 
 然后用一条命令生成 `config.toml` 和 `models_catalog.json`：
 
-```bash
-CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-MODEL=$(go run ./cmd/moonbridge --print-codex-model)
-go run ./cmd/moonbridge \
-  --print-codex-config "$MODEL" \
-  --codex-base-url "http://127.0.0.1:38440/v1" \
-  --codex-home "$CODEX_HOME_DIR" \
-  > "$CODEX_HOME_DIR/config.toml"
+```powershell
+$CODEX_HOME_DIR = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { "$HOME\.codex" }
+$MODEL = go run ./cmd/moonbridge --print-codex-model
+go run ./cmd/moonbridge `
+  --print-codex-config "$MODEL" `
+  --codex-base-url "http://127.0.0.1:38440/v1" `
+  --codex-home "$CODEX_HOME_DIR" `
+  | Set-Content -Path "$CODEX_HOME_DIR\config.toml" -NoNewline
 ```
 
 这会在 `$CODEX_HOME_DIR` 下写入两个文件：
@@ -148,8 +154,8 @@ go run ./cmd/moonbridge \
 
 启动 Codex：
 
-```bash
-CODEX_HOME="$CODEX_HOME_DIR" codex --cd "$PWD"
+```powershell
+$env:CODEX_HOME = $CODEX_HOME_DIR; codex --cd $PWD
 ```
 
 **验证：** Codex 正常启动，提问后 Moon Bridge 终端出现 `POST /v1/responses` 日志。
@@ -375,8 +381,8 @@ provider:
 
 ### 服务起不来
 
-```bash
-go run ./cmd/moonbridge -config /path/to/config.yml 2>&1 | head -30
+```powershell
+go run ./cmd/moonbridge -config /path/to/config.yml 2>&1 | Select-Object -First 30
 ```
 
 | 错误 | 原因 |
@@ -390,6 +396,10 @@ go run ./cmd/moonbridge -config /path/to/config.yml 2>&1 | head -30
 | `rate limit` | 请求太频繁 |
 
 ### curl 不通
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:38440/v1/models | Select-Object -First 3
+```
 
 ```bash
 curl -s http://localhost:38440/v1/models | head -3

@@ -9,8 +9,17 @@ log:
 
 server:
   addr: "127.0.0.1:38440"
+  # Set a Bearer token for API authentication. When non-empty, all requests
+  # must include an Authorization: Bearer <token> header. If empty, auth is disabled.
+  # auth_token: "replace-with-your-secret-token"
 
 trace_requests: false
+
+
+# Persistence layer: select active provider when multiple are enabled.
+# Leave empty to auto-select when only one is registered.
+persistence:
+  active_provider: db_sqlite
 
 extensions:
   deepseek_v4:
@@ -25,16 +34,38 @@ extensions:
       model: "kimi-for-coding"
       max_rounds: 4
       max_tokens: 2048
+  # Database provider: SQLite
+  db_sqlite:
+    enabled: true
+    config:
+      path: ./data/moonbridge.db
+      wal: true
+      busy_timeout_ms: 5000
+      max_open_conns: 1
+
+  # Database provider: Cloudflare D1 (Worker only)
+  # db_d1:
+  #   enabled: true
+  #   config:
+  #     binding: MOONBRIDGE_DB
+
+  # Persistence consumer: request metrics
+  metrics:
+    enabled: true
+    config:
+      default_limit: 100
+      max_limit: 1000
+
 
 provider:
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "replace-with-deepseek-api-key"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"
       web_search:
-        support: "disabled"
+        support: "auto"
       models:
         deepseek-v4-pro:
           context_window: 1000000
@@ -61,8 +92,33 @@ provider:
             output_price: 8
             cache_write_price: 1
             cache_read_price: 0.2
+        deepseek-v4-flash:
+          context_window: 1000000
+          max_output_tokens: 384000
+          display_name: "DeepSeek V4 Flash"
+          description: "DeepSeek V4 Flash with selectable high/xhigh reasoning effort."
+          extensions:
+            deepseek_v4:
+              enabled: true
+            visual:
+              enabled: true
+          default_reasoning_level: "high"
+          supported_reasoning_levels:
+            - effort: "high"
+              description: "High reasoning effort"
+            - effort: "xhigh"
+              description: "Extra high reasoning effort (maps to DeepSeek max)"
+          supports_reasoning_summaries: true
+          default_reasoning_summary: "auto"
+          web_search:
+            support: "auto"  # model-level override (auto / enabled / disabled / injected)
+          pricing:
+            input_price: 1
+            output_price: 2
+            cache_write_price: 1
+            cache_read_price: 0.02
     kimi:
-      base_url: "https://api.moonshot.cn/anthropic"
+      base_url: "https://api.kimi.com/coding/"
       api_key: "replace-with-kimi-api-key"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"
@@ -83,6 +139,34 @@ provider:
       user_agent: "moonbridge/1.0"
       web_search:
         support: "enabled"
+      models:
+        claude-sonnet-4-20250514:
+          context_window: 200000
+          max_output_tokens: 64000
+          display_name: "Claude Sonnet 4"
+          description: "Frontier model for everyday coding."
+          default_reasoning_level: "medium"
+          supported_reasoning_levels:
+            - effort: "low"
+              description: "Fast responses with lighter reasoning"
+            - effort: "medium"
+              description: "Balances speed and reasoning depth for everyday tasks"
+            - effort: "high"
+              description: "Greater reasoning depth for complex problems"
+            - effort: "xhigh"
+              description: "Extra high reasoning depth for complex problems"
+          # Declare this model as multimodal (supports image input).
+          # Codex reads these from models_catalog.json to decide whether
+          # image attachments can be included in user turns.
+          input_modalities:
+            - "text"
+            - "image"
+          supports_image_detail_original: true
+          pricing:
+            input_price: 3
+            output_price: 15
+            cache_write_price: 3.75
+            cache_read_price: 0.30
 
   routes:
     # Optional aliases. Provider models are listed directly in the Codex catalog
