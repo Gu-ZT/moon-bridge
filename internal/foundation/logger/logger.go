@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-var defaultLogger *slog.Logger
+// defaultHandler is the root consumeHandler wrapping the configured text/json handler.
+// It is referenced by the slog.Default() logger after Init. SetConsumeFunc operates
+// on this handler, and all derived sub-loggers share the same consumeState.
 var defaultHandler *consumeHandler
 
 // LogEntry represents a single log entry passed through the consume pipeline.
@@ -22,11 +24,9 @@ type LogEntry struct {
 }
 
 func init() {
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
+	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
 	defaultHandler = newConsumeHandler(h)
-	defaultLogger = slog.New(defaultHandler)
+	slog.SetDefault(slog.New(defaultHandler))
 }
 
 // Level represents a log level.
@@ -62,9 +62,10 @@ type Config struct {
 	Output io.Writer
 }
 
-// Init initializes the default logger from config.
+// Init configures slog's default logger.
 // The inner handler is wrapped with a consumeHandler so that plugins
 // registered via SetConsumeFunc receive every log record.
+// After Init, all code using slog.Default() sees the configured handler.
 func Init(cfg Config) error {
 	lvl, err := ParseLevel(string(cfg.Level))
 	if err != nil {
@@ -83,13 +84,8 @@ func Init(cfg Config) error {
 		inner = slog.NewTextHandler(out, opts)
 	}
 	defaultHandler = newConsumeHandler(inner)
-	defaultLogger = slog.New(defaultHandler)
+	slog.SetDefault(slog.New(defaultHandler))
 	return nil
-}
-
-// L returns the default logger.
-func L() *slog.Logger {
-	return defaultLogger
 }
 
 // SetConsumeFunc registers a consume callback that is invoked for every
@@ -99,24 +95,4 @@ func SetConsumeFunc(fn ConsumeFunc) {
 	if defaultHandler != nil {
 		defaultHandler.SetConsumeFunc(fn)
 	}
-}
-
-// Debug logs a debug message.
-func Debug(msg string, args ...any) {
-	defaultLogger.Debug(msg, args...)
-}
-
-// Info logs an info message.
-func Info(msg string, args ...any) {
-	defaultLogger.Info(msg, args...)
-}
-
-// Warn logs a warning message.
-func Warn(msg string, args ...any) {
-	defaultLogger.Warn(msg, args...)
-}
-
-// Error logs an error message.
-func Error(msg string, args ...any) {
-	defaultLogger.Error(msg, args...)
 }
