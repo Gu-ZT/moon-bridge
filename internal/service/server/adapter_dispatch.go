@@ -13,6 +13,7 @@ import (
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/cache"
 	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/service/stats"
 	"moonbridge/internal/service/provider"
 	mbtrace "moonbridge/internal/service/trace"
 )
@@ -315,6 +316,16 @@ func (s *Server) handleWithAdapters(
 			}, false)
 		}
 		s.onRequestCompleted(openAIReq.Model, openAIReq.Model, requestStart, usage, 0, "success", "")
+
+		// Record usage statistics.
+		if s.stats != nil {
+			s.stats.Record(openAIReq.Model, preferred.UpstreamModel, stats.Usage{
+				InputTokens:              coreResp.Usage.InputTokens,
+				OutputTokens:             coreResp.Usage.OutputTokens,
+				CacheReadInputTokens:     coreResp.Usage.CachedInputTokens,
+				CacheCreationInputTokens: 0,
+			})
+		}
 	}
 }
 
