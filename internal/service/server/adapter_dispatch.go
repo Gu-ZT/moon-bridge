@@ -530,6 +530,8 @@ func (s *Server) handleAdapterStream(
 	// Update trace record with the final response data.
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
+	} else {
+		streamRecord.OpenAIResponse = &openai.Response{Model: openAIReq.Model, Status: "completed"}
 	}
 
 	// Notify plugin hooks for metrics tracking.
