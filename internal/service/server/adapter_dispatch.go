@@ -215,7 +215,8 @@ func (s *Server) handleWithAdapters(
 	// ------------------------------------------------------------------
 	if openAIReq.Stream {
 		s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, upstreamReq, preferred)
-		record.OpenAIResponse = &openai.Response{Model: openAIReq.Model, Status: "completed"}
+		// handleAdapterStream writes its own complete trace
+		record.OpenAIRequest = nil
 		return
 	}
 	// ------------------------------------------------------------------
