@@ -54,5 +54,5 @@ build/
 
 # Wrangler dev vars
 .dev.vars
-moonbridge
+/moonbridge
 logs/
