@@ -100,6 +100,10 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 		TopP:          req.TopP,
 		StopSequences: req.StopSequences,
 		Stream:        req.Stream,
+		TopK:          req.TopK,
+		Thinking:      a.coreThinkingConfig(req.Thinking),
+		OutputConfig:  a.coreOutputConfig(req.Output),
+		CacheControl:  a.coreCacheControl(req.CacheControl),
 		Metadata:      req.Metadata,
 	}
 
@@ -725,6 +729,47 @@ func (a *AnthropicProviderAdapter) RememberStreamContent(ctx context.Context, bl
 	}
 	a.hooks.RememberContent(ctx, blocks)
 }
+
+// =========================================================================
+// Helpers: Core -> Anthropic (new type conversions)
+// =========================================================================
+
+// coreThinkingConfig converts *format.CoreThinkingConfig to *ThinkingConfig.
+func (a *AnthropicProviderAdapter) coreThinkingConfig(c *format.CoreThinkingConfig) *ThinkingConfig {
+	if c == nil {
+		return nil
+	}
+	return &ThinkingConfig{
+		Type:         c.Type,
+		BudgetTokens: c.BudgetTokens,
+	}
+}
+
+// coreOutputConfig converts *format.CoreOutputConfig to *OutputConfig.
+func (a *AnthropicProviderAdapter) coreOutputConfig(c *format.CoreOutputConfig) *OutputConfig {
+	if c == nil {
+		return nil
+	}
+	return &OutputConfig{
+		Effort: c.Effort,
+	}
+}
+
+// coreCacheControl converts *format.CoreCacheControl to *CacheControl.
+// The per-block CacheControl only supports ephemeral; level-up mapping:
+// - enabled + "auto" strategy -> ephemeral
+// - otherwise -> nil (provider defaults)
+func (a *AnthropicProviderAdapter) coreCacheControl(c *format.CoreCacheControl) *CacheControl {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	cc := &CacheControl{Type: "ephemeral"}
+	if c.TTLSeconds > 0 {
+		cc.TTL = fmt.Sprintf("%ds", c.TTLSeconds)
+	}
+	return cc
+}
+
 // cleanSchema recursively removes nil values from a JSON schema map.
 // DeepSeek rejects null values in schema properties.
 // Empty maps are preserved as-is (e.g. properties:{}) to avoid corrupting

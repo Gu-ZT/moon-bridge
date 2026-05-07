@@ -109,6 +109,30 @@ type CoreToolChoice struct {
 // Request
 // ============================================================================
 
+// CoreThinkingConfig configures extended thinking/reasoning behavior.
+// Used by Anthropic (thinking type + budget_tokens) and similar provider features.
+// nil = use provider defaults.
+type CoreThinkingConfig struct {
+	Type         string `json:"type,omitempty"`          // "enabled" | "disabled"
+	BudgetTokens int    `json:"budget_tokens,omitempty"`  // token budget for thinking
+}
+
+// CoreOutputConfig controls output generation behavior.
+// Anthropic uses "effort" to control reasoning effort.
+// nil = use provider defaults.
+type CoreOutputConfig struct {
+	Effort string `json:"effort,omitempty"` // "low" | "medium" | "high" — provider-specific
+}
+
+// CacheControl enables prompt caching with optional TTL and breakpoint hints.
+// Lifted from per-block level to request-level for uniform cache strategy.
+// nil = cache disabled or use provider defaults.
+type CoreCacheControl struct {
+	Enabled    bool   `json:"enabled,omitempty"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+	Strategy   string `json:"strategy,omitempty"` // "auto" | "manual" | "disabled"
+}
+
 // CoreRequest is the protocol-agnostic representation of an LLM request.
 type CoreRequest struct {
 	Model    string          `json:"model"`
@@ -123,6 +147,9 @@ type CoreRequest struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
 	MaxTokens   int      `json:"max_tokens,omitempty"`
+
+	// TopK sampling parameter (Anthropic-specific, optional)
+	TopK *int `json:"top_k,omitempty"`
 
 	// Stop conditions
 	StopSequences []string `json:"stop_sequences,omitempty"`
@@ -140,6 +167,19 @@ type CoreRequest struct {
 	// ProviderAdapters for Gemini read this and map to Gemini's generationConfig.
 	// Zero value (nil) = not set — adapter uses provider defaults.
 	GenerationConfig map[string]any `json:"generation_config,omitempty"`
+
+
+	// Thinking controls extended thinking/reasoning behavior (e.g. Anthropic extended thinking).
+	// nil = use provider defaults.
+	Thinking *CoreThinkingConfig `json:"thinking,omitempty"`
+
+	// Output controls output generation behavior (e.g. Anthropic effort level).
+	// nil = use provider defaults.
+	Output *CoreOutputConfig `json:"output,omitempty"`
+
+	// CacheControl enables prompt caching at request level.
+	// nil = cache disabled or use provider defaults.
+	CacheControl *CoreCacheControl `json:"cache_control,omitempty"`
 
 	// Metadata and extensions
 	Metadata   map[string]any `json:"metadata,omitempty"`
