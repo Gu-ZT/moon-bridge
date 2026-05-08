@@ -248,7 +248,38 @@ func (s *Server) handleWithAdapters(
 		}
 
 		// Anthropic response → CoreResponse.
-		coreResp, err = providerAdapter.ToCoreResponse(ctx, &upstreamResp)
+		// upstreamResp is any, but ToCoreResponse expects *anthropic.MessageResponse.
+		// Extract the concrete type before passing by pointer.
+		msgResp, ok := upstreamResp.(anthropic.MessageResponse)
+		if !ok {
+			log.Error("adapter path: unexpected anthropic response type", "type", fmt.Sprintf("%T", upstreamResp))
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("unexpected anthropic response type %T", upstreamResp),
+					Type:    "server_error",
+					Code:    "conversion_error",
+				},
+			}
+			record.Error = traceError("to_core_response", fmt.Errorf("unexpected anthropic response type %T", upstreamResp))
+			record.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+		coreResp, err = providerAdapter.ToCoreResponse(ctx, &msgResp)
+		if err != nil {
+			log.Error("adapter path: Anthropic ToCoreResponse failed", "error", err)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("response conversion failed: %v", err),
+					Type:    "server_error",
+					Code:    "conversion_error",
+				},
+			}
+			record.Error = traceError("to_core_response", err)
+			record.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
 
 		// Remember response content for plugin state tracking (pending Plan 02).
 		// ProviderClient returns any; adapter converts via ToCoreResponse.

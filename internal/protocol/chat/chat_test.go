@@ -1064,7 +1064,20 @@ func TestFromCoreRequest_ToolChoice(t *testing.T) {
 				if s, ok := tc.(string); !ok || s != "auto" {
 					t.Errorf("ToolChoice = %v, want \"auto\"", tc)
 				}
-			case "any", "required":
+			case "required":
+				if tt.tname == "" {
+					if s, ok := tc.(string); !ok || s != "required" {
+						t.Errorf("ToolChoice = %v, want \"required\"", tc)
+					}
+				} else {
+					obj, ok := tc.(map[string]any)
+					if !ok {
+						t.Errorf("ToolChoice = %T, want map[string]any for named function", tc)
+					} else if obj["type"] != "function" {
+						t.Errorf("ToolChoice type = %v, want function", obj["type"])
+					}
+				}
+			case "any":
 				if tt.tname == "" {
 					if s, ok := tc.(string); !ok || s != "auto" {
 						t.Errorf("ToolChoice = %v, want \"auto\"", tc)

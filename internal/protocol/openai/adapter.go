@@ -58,7 +58,7 @@ func (a *OpenAIAdapter) ClientProtocol() string {
 // Supported mappings:
 //   - Model, Temperature, TopP, MaxOutputTokens, Stream, Metadata → direct copy
 //   - Input (string | array) → Messages + System
-//   - Instructions → appended to System
+//   - Instructions → prepended to System
 //   - Tools → CoreTool (function → name/desc/schema; web_search → extensions)
 //   - ToolChoice → CoreToolChoice (with raw JSON preserved)
 //   - PromptCacheKey / PromptCacheRetention → Extensions["cache"]
@@ -86,12 +86,12 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
-	// 3. Append Instructions to System.
+	// 3. Prepend Instructions to System (highest priority).
 	if openaiReq.Instructions != "" {
-		system = append(system, format.CoreContentBlock{
+		system = append([]format.CoreContentBlock{{
 			Type: "text",
 			Text: openaiReq.Instructions,
-		})
+		}}, system...)
 	}
 
 	// 4. Build CoreRequest with direct scalar mappings.
@@ -136,7 +136,34 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 		coreReq.Extensions["cache"] = cacheMeta
 	}
 
-	// 8. Apply MutateCoreRequest hook for plugins.
+	// 8. OpenAI-specific extension fields.
+	openaiExt := make(map[string]any)
+	if openaiReq.ParallelToolCalls != nil {
+		openaiExt["parallel_tool_calls"] = *openaiReq.ParallelToolCalls
+	}
+	if len(openaiReq.Include) > 0 {
+		openaiExt["include"] = openaiReq.Include
+	}
+	if len(openaiReq.Reasoning) > 0 {
+		openaiExt["reasoning"] = openaiReq.Reasoning
+	}
+	if len(openaiReq.Text) > 0 {
+		openaiExt["text"] = openaiReq.Text
+	}
+	if openaiReq.ServiceTier != "" {
+		openaiExt["service_tier"] = openaiReq.ServiceTier
+	}
+	if openaiReq.PreviousResponseID != "" {
+		openaiExt["previous_response_id"] = openaiReq.PreviousResponseID
+	}
+	if openaiReq.Store != nil {
+		openaiExt["store"] = *openaiReq.Store
+	}
+	if len(openaiExt) > 0 {
+		coreReq.Extensions["openai"] = openaiExt
+	}
+
+
 	a.hooks.MutateCoreRequest(ctx, coreReq)
 
 	return coreReq, nil
@@ -242,7 +269,7 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 	response.OutputText = strings.Join(texts, "")
 
 	// Map usage.
-	response.Usage = Usage{
+	usage := Usage{
 		InputTokens:  resp.Usage.InputTokens,
 		OutputTokens: resp.Usage.OutputTokens,
 		TotalTokens:  resp.Usage.TotalTokens,
@@ -250,6 +277,22 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 			CachedTokens: resp.Usage.CachedInputTokens,
 		},
 	}
+	// Extract OutputTokensDetails from extensions if available.
+	if resp.Extensions != nil {
+		if otRaw, ok := resp.Extensions["output_tokens_details"]; ok {
+			if otMap, ok := otRaw.(map[string]any); ok {
+				if rt, ok := otMap["reasoning_tokens"]; ok {
+					if rtVal, ok := rt.(float64); ok {
+						usage.OutputTokensDetails = OutputTokensDetails{
+							ReasoningTokens: int(rtVal),
+						}
+					}
+				}
+			}
+		}
+	}
+	response.Usage = usage
+
 
 	// Map error.
 	if resp.Error != nil {
@@ -973,6 +1016,14 @@ func convertInput(raw json.RawMessage) ([]format.CoreMessage, []format.CoreConte
 
 		switch {
 		case item.Type == "function_call":
+		// NOTE: Reasoning alignment for inference models (o3/o4-mini):
+		// OpenAI requires a "reasoning" input item before each "function_call" item
+		// when using reasoning models. Currently, pendingReasoning blocks (from preceding
+		// reasoning input items) are merged into the next assistant message, but no
+		// dummy reasoning block is injected if pendingReasoning is empty.
+		// A future fix should add a dummy reasoning block here when:
+		// (a) the model is a reasoning model, and (b) pendingReasoning is empty.
+
 			// function_call in input → tool_use assistant block.
 			// Collect into pendingFCBlocks to batch consecutive calls into a single assistant message.
 			if len(pendingReasoning) > 0 {
@@ -1157,6 +1208,33 @@ func convertTool(tool Tool) format.CoreTool {
 			Description: "Search the web for up-to-date information.",
 			Extensions:  ext,
 		}
+	case "file_search":
+		ext["source_type"] = tool.Type
+		ext["max_num_results"] = tool.MaxNumResults
+		return format.CoreTool{
+			Name:        tool.Type,
+			Description: "Search files in the user's file system.",
+			Extensions:  ext,
+		}
+
+	case "code_interpreter":
+		ext["source_type"] = tool.Type
+		return format.CoreTool{
+			Name:        tool.Type,
+			Description: "Execute code in a sandboxed interpreter.",
+			Extensions:  ext,
+		}
+
+	case "computer_use_preview":
+		ext["source_type"] = tool.Type
+		ext["display_width"] = tool.DisplayWidth
+		ext["display_height"] = tool.DisplayHeight
+		return format.CoreTool{
+			Name:        tool.Type,
+			Description: "Use a computer to perform actions.",
+			Extensions:  ext,
+		}
+
 
 	default:
 		ext["source_type"] = tool.Type

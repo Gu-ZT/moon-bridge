@@ -34,6 +34,13 @@ type GeminiProviderAdapter struct {
 	// currentCacheKey tracks the cache key for the current request.
 	currentCacheKey string
 
+	// currentModel tracks the model for the current request (used by cache).
+	currentModel string
+
+	// toolUseIDMap maps ToolUseID → ToolName for FunctionResponse name resolution.
+	// Only valid during a single FromCoreRequest call.
+	toolUseIDMap map[string]string
+	toolUseIDMu  sync.Mutex
 
 	streamMu      sync.Mutex
 	streamEvents  []GenerateContentResponse
@@ -76,6 +83,12 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 		return nil, fmt.Errorf("google adapter: core request is nil")
 	}
 
+	// Initialize per-request state.
+	a.toolUseIDMu.Lock()
+	a.toolUseIDMap = make(map[string]string)
+	a.toolUseIDMu.Unlock()
+	a.currentModel = req.Model
+
 	// Step 1: Allow plugins to mutate the CoreRequest before conversion.
 	a.hooks.MutateCoreRequest(ctx, req)
 
@@ -92,12 +105,20 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 		}
 	}
 
-	// Messages → Contents (role mapping: "assistant" → "model", "user" → "user")
+	// Messages → Contents with role merging (G-03):
+	// Gemini API requires alternating user/model roles, so consecutive messages
+	// with the same role (e.g. tool_result after user text) are merged.
+	mergedContents := make([]Content, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		content := a.blocksToContent(msg.Content)
 		content.Role = a.mapRoleToGemini(msg.Role)
-		geminiReq.Contents = append(geminiReq.Contents, content)
+		if len(mergedContents) > 0 && mergedContents[len(mergedContents)-1].Role == content.Role {
+			mergedContents[len(mergedContents)-1].Parts = append(mergedContents[len(mergedContents)-1].Parts, content.Parts...)
+		} else {
+			mergedContents = append(mergedContents, content)
+		}
 	}
+	geminiReq.Contents = mergedContents
 
 	// SafetySettings (D-02): CoreRequest.SafetySettings map → Gemini []SafetySetting
 	if len(req.SafetySettings) > 0 {
@@ -125,6 +146,12 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 
 	// Cache integration — look up or create CachedContent.
 	a.prepareCache(ctx, geminiReq)
+
+	// Clean up per-request state.
+	a.toolUseIDMu.Lock()
+	a.toolUseIDMap = nil
+	a.toolUseIDMu.Unlock()
+	a.currentModel = ""
 
 	return geminiReq, nil
 }
@@ -372,33 +399,47 @@ func (a *GeminiProviderAdapter) blocksToContent(blocks []format.CoreContentBlock
 					Data:     b.ImageData,
 				},
 			})
-		case "tool_use":
-			parts = append(parts, Part{
-				FunctionCall: &FunctionCall{
-					Name: b.ToolName,
-					Args: b.ToolInput,
-				},
-			})
-		case "tool_result":
-			// Combine tool result content into a single text for the response.
-			var respText string
-			if len(b.ToolResultContent) > 0 {
-				for _, tc := range b.ToolResultContent {
-					respText += tc.Text
-				}
+	case "tool_use":
+		// Store ToolUseID -> ToolName mapping for later FunctionResponse resolution (G-01).
+		a.toolUseIDMu.Lock()
+		a.toolUseIDMap[b.ToolUseID] = b.ToolName
+		a.toolUseIDMu.Unlock()
+		parts = append(parts, Part{
+			FunctionCall: &FunctionCall{
+				Name: b.ToolName,
+				Args: b.ToolInput,
+			},
+		})
+	case "tool_result":
+		// Look up the function name from ToolUseID (G-01).
+		funcName := b.ToolUseID
+		a.toolUseIDMu.Lock()
+		if fn, ok := a.toolUseIDMap[b.ToolUseID]; ok {
+			funcName = fn
+		}
+		a.toolUseIDMu.Unlock()
+
+		// Combine tool result content into a single text for the response.
+		var respText string
+		if len(b.ToolResultContent) > 0 {
+			for _, tc := range b.ToolResultContent {
+				respText += tc.Text
 			}
-			respMap := map[string]any{"response": respText}
-			respRaw, _ := marshalRaw(respMap)
-			parts = append(parts, Part{
-				FunctionResponse: &FunctionResponse{
-					Name:     b.ToolUseID,
-					Response: respRaw,
-				},
-			})
-		case "reasoning":
-			// Reasoning blocks are not directly representable in Gemini format.
-			// Skip reasoning content in the upstream request.
-			continue
+		}
+		respMap := map[string]any{"response": respText}
+		respRaw, _ := marshalRaw(respMap)
+		parts = append(parts, Part{
+			FunctionResponse: &FunctionResponse{
+				Name:     funcName,
+				Response: respRaw,
+			},
+		})
+	case "reasoning":
+		// Gemini does not natively support a "reasoning" content type, so
+		// convert reasoning text to a regular text Part to retain the content (G-06).
+		if b.ReasoningText != "" {
+			parts = append(parts, Part{Text: b.ReasoningText})
+		}
 		default:
 			// Fallback: treat unknown types as text.
 			if b.Text != "" {
@@ -469,27 +510,27 @@ func (a *GeminiProviderAdapter) applyGenerationConfigMap(gc *GenerationConfig, c
 			if f, ok := toFloat64(v); ok {
 				gc.Temperature = &f
 			}
-		case "top_p":
+		case "topP":
 			if f, ok := toFloat64(v); ok {
 				gc.TopP = &f
 			}
-		case "top_k":
+		case "topK":
 			if f, ok := toFloat64(v); ok {
 				gc.TopK = &f
 			}
-		case "max_output_tokens":
+		case "maxOutputTokens":
 			if i, ok := toInt(v); ok {
 				gc.MaxOutputTokens = i
 			}
-		case "stop_sequences":
+		case "stopSequences":
 			if ss, ok := toStringSlice(v); ok {
 				gc.StopSequences = ss
 			}
-		case "response_mime_type":
+		case "responseMimeType":
 			if s, ok := v.(string); ok {
 				gc.ResponseMimeType = s
 			}
-		case "candidate_count":
+		case "candidateCount":
 			if i, ok := toInt(v); ok {
 				gc.CandidateCount = i
 			}

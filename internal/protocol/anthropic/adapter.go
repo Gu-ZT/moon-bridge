@@ -176,9 +176,22 @@ func parseTTLSeconds(ttl string) int {
 	if ttl == "" {
 		return 0
 	}
-	var seconds int
-	if n, err := fmt.Sscanf(ttl, "%ds", &seconds); err == nil && n == 1 {
-		return seconds
+	var value int
+	var unit string
+	if n, err := fmt.Sscanf(ttl, "%d%s", &value, &unit); err == nil && n >= 1 {
+		switch unit {
+		case "s":
+			return value
+		case "m":
+			return value * 60
+		case "h":
+			return value * 3600
+		default:
+			// If unit is empty or unrecognized but value was parsed, treat as seconds.
+			if n == 1 {
+				return value
+			}
+		}
 	}
 	return 0
 }
@@ -539,8 +552,8 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 	case "message_delta":
 		if ev.Usage != nil {
 			s.finalUsage = &format.CoreUsage{
-				// Normalize InputTokens to total (fresh + cached).
-				InputTokens:       ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens,
+				// Anthropic input_tokens already includes cache reads.
+				InputTokens:       ev.Usage.InputTokens,
 				OutputTokens:      ev.Usage.OutputTokens,
 				CachedInputTokens: ev.Usage.CacheReadInputTokens,
 			}
@@ -665,6 +678,9 @@ func (a *AnthropicProviderAdapter) toAnthropicToolChoice(tc format.CoreToolChoic
 	case "auto":
 		return ToolChoice{Type: "auto"}
 	case "any", "required":
+		// Note: Anthropic API does not have a "required" mode (force at least one tool call).
+		// The closest equivalent is "any" (let the model choose any of the provided tools).
+		// This means the original "required" semantics is approximated but not exact.
 		if tc.Name != "" {
 			return ToolChoice{Type: "tool", Name: tc.Name}
 		}
@@ -838,6 +854,10 @@ func (a *AnthropicProviderAdapter) mapStopReasonToStatus(reason string) string {
 func (a *AnthropicProviderAdapter) bufferStreamEvent(ev StreamEvent) {
 	a.streamMu.Lock()
 	defer a.streamMu.Unlock()
+	// Cap buffer at 1024 events (~4MB estimation) to prevent unbounded memory growth.
+	if len(a.streamEvents) >= 1024 {
+		return
+	}
 	a.streamEvents = append(a.streamEvents, ev)
 }
 

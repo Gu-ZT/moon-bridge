@@ -240,6 +240,7 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 				reasonIndex  int   // block index for the reasoning content block
 			toolCallIdx  int   // next tool call content block index (starts after text block)
 			callStarted map[int]bool // tracks which tool call indices have been started
+			reasoningContent string // accumulated reasoning content for the current reasoning block
 		}
 		choices := make(map[int]*choiceState)
 		var seqNum int64
@@ -340,6 +341,7 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 								},
 							})
 						}
+						state.reasoningContent += sc.Delta.ReasoningContent
 						emit(format.CoreStreamEvent{
 							Type:        format.CoreTextDelta,
 							Index:       state.reasonIndex,
@@ -354,7 +356,12 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 							Type:  format.CoreContentBlockDone,
 							Index: state.reasonIndex,
 							ChoiceIndex: &ci,
+							ContentBlock: &format.CoreContentBlock{
+								Type: "reasoning",
+								ReasoningText: state.reasoningContent,
+							},
 						})
+						state.reasoningContent = ""
 						state.hasReasoning = false
 						state.blockIndex = state.reasonIndex + 1
 						emit(format.CoreStreamEvent{
@@ -427,12 +434,26 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 					// Emit content_block.done when finish_reason is set.
 					if sc.FinishReason != "" {
 						stopReason := a.mapFinishReason(sc.FinishReason)
-						emit(format.CoreStreamEvent{
-							Type:        format.CoreContentBlockDone,
-							Index:       state.blockIndex,
-							StopReason:  stopReason,
-							ChoiceIndex: &ci,
-						})
+						if state.hasReasoning {
+							emit(format.CoreStreamEvent{
+								Type:        format.CoreContentBlockDone,
+								Index:       state.blockIndex,
+								StopReason:  stopReason,
+								ChoiceIndex: &ci,
+								ContentBlock: &format.CoreContentBlock{
+									Type: "reasoning",
+									ReasoningText: state.reasoningContent,
+								},
+							})
+							state.reasoningContent = ""
+						} else {
+							emit(format.CoreStreamEvent{
+								Type:        format.CoreContentBlockDone,
+								Index:       state.blockIndex,
+								StopReason:  stopReason,
+								ChoiceIndex: &ci,
+							})
+						}
 						// Complete tool call blocks.
 						for idx := range state.callStarted {
 							emit(format.CoreStreamEvent{
@@ -541,13 +562,12 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 	if len(toolUseBlocks) > 0 {
 		chatMsg.ToolCalls = make([]ToolCall, 0, len(toolUseBlocks))
 		for _, b := range toolUseBlocks {
-		argsStr, _ := json.Marshal(string(b.ToolInput))
 			chatMsg.ToolCalls = append(chatMsg.ToolCalls, ToolCall{
 				ID:   b.ToolUseID,
 				Type: "function",
 				Function: ToolCallFunc{
 					Name:      b.ToolName,
-					Arguments: json.RawMessage(argsStr),
+					Arguments: b.ToolInput,
 				},
 			})
 		}
@@ -659,14 +679,27 @@ func (a *ChatProviderAdapter) toChatToolChoice(tc format.CoreToolChoice) json.Ra
 	case "auto":
 		data, _ := json.Marshal("auto")
 		return data
-	case "any", "required":
+	case "required":
 		if tc.Name != "" {
 			choice := map[string]any{
 				"type": "function",
 				"function": map[string]string{
 					"name": tc.Name,
-				},
-			}
+			},
+		}
+			data, _ := json.Marshal(choice)
+			return data
+		}
+		data, _ := json.Marshal("required")
+		return data
+	case "any":
+		if tc.Name != "" {
+			choice := map[string]any{
+				"type": "function",
+				"function": map[string]string{
+					"name": tc.Name,
+			},
+		}
 			data, _ := json.Marshal(choice)
 			return data
 		}

@@ -11,15 +11,15 @@ import "encoding/json"
 // https://ai.google.dev/api/generate-content
 type GenerateContentRequest struct {
 	Contents         []Content            `json:"contents"`
-	SystemInstruction *Content            `json:"system_instruction,omitempty"`
-	SafetySettings   []SafetySetting      `json:"safety_settings,omitempty"`
-	GenerationConfig *GenerationConfig    `json:"generation_config,omitempty"`
+	SystemInstruction *Content            `json:"systemInstruction,omitempty"`
+	SafetySettings   []SafetySetting      `json:"safetySettings,omitempty"`
+	GenerationConfig *GenerationConfig    `json:"generationConfig,omitempty"`
 	Tools            []Tool               `json:"tools,omitempty"`
-	ToolConfig       json.RawMessage      `json:"tool_config,omitempty"`
+	ToolConfig       json.RawMessage      `json:"toolConfig,omitempty"`
 	// CachedContent references a CachedContent resource for prompt caching.
 	// When set, system_instruction, tools, and tool_config must not be set
 	// (Gemini API constraint — they become part of the cached content).
-	CachedContent string `json:"cached_content,omitempty"`
+	CachedContent string `json:"cachedContent,omitempty"`
 }
 
 // Content represents a single message content in Gemini's format.
@@ -32,22 +32,22 @@ type Content struct {
 // Part represents a single part within Content.
 type Part struct {
 	Text             string             `json:"text,omitempty"`
-	InlineData       *Blob              `json:"inline_data,omitempty"`
-	FileData         *FileData          `json:"file_data,omitempty"`
-	FunctionCall     *FunctionCall      `json:"function_call,omitempty"`
-	FunctionResponse *FunctionResponse  `json:"function_response,omitempty"`
+	InlineData       *Blob              `json:"inlineData,omitempty"`
+	FileData         *FileData          `json:"fileData,omitempty"`
+	FunctionCall     *FunctionCall      `json:"functionCall,omitempty"`
+	FunctionResponse *FunctionResponse  `json:"functionResponse,omitempty"`
 }
 
 // Blob represents inline binary data.
 type Blob struct {
-	MimeType string `json:"mime_type"`
+	MimeType string `json:"mimeType"`
 	Data     string `json:"data"`
 }
 
 // FileData represents a reference to external file data.
 type FileData struct {
-	MimeType string `json:"mime_type"`
-	FileURI  string `json:"file_uri"`
+	MimeType string `json:"mimeType"`
+	FileURI  string `json:"fileUri"`
 }
 
 // FunctionCall represents a function call request from the model.
@@ -71,17 +71,17 @@ type SafetySetting struct {
 // GenerationConfig controls text generation parameters.
 type GenerationConfig struct {
 	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"top_p,omitempty"`
-	TopK             *float64 `json:"top_k,omitempty"`
-	MaxOutputTokens  int      `json:"max_output_tokens,omitempty"`
-	StopSequences    []string `json:"stop_sequences,omitempty"`
-	ResponseMimeType string   `json:"response_mime_type,omitempty"`
-	CandidateCount   int      `json:"candidate_count,omitempty"`
+	TopP             *float64 `json:"topP,omitempty"`
+	TopK             *float64 `json:"topK,omitempty"`
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	StopSequences    []string `json:"stopSequences,omitempty"`
+	ResponseMimeType string   `json:"responseMimeType,omitempty"`
+	CandidateCount   int      `json:"candidateCount,omitempty"`
 }
 
 // Tool represents a tool available to the model.
 type Tool struct {
-	FunctionDeclarations []FunctionDeclaration `json:"function_declarations,omitempty"`
+	FunctionDeclarations []FunctionDeclaration `json:"functionDeclarations,omitempty"`
 }
 
 // FunctionDeclaration declares a function that the model may call.
@@ -100,16 +100,16 @@ type FunctionDeclaration struct {
 // complete GenerateContentResponse snapshot.
 type GenerateContentResponse struct {
 	Candidates     []Candidate     `json:"candidates"`
-	PromptFeedback *PromptFeedback `json:"prompt_feedback,omitempty"`
-	UsageMetadata  *UsageMetadata  `json:"usage_metadata,omitempty"`
+	PromptFeedback *PromptFeedback `json:"promptFeedback,omitempty"`
+	UsageMetadata  *UsageMetadata  `json:"usageMetadata,omitempty"`
 }
 
 // Candidate represents a single response candidate.
 type Candidate struct {
 	Index         int             `json:"index"`
 	Content       Content         `json:"content"`
-	FinishReason  string          `json:"finish_reason"` // STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
-	SafetyRatings []SafetyRating  `json:"safety_ratings,omitempty"`
+	FinishReason  string          `json:"finishReason"` // STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
+	SafetyRatings []SafetyRating  `json:"safetyRatings,omitempty"`
 }
 
 // SafetyRating represents a safety rating for a category.
@@ -121,18 +121,18 @@ type SafetyRating struct {
 
 // PromptFeedback contains feedback on the prompt's safety.
 type PromptFeedback struct {
-	SafetyRatings []SafetyRating `json:"safety_ratings,omitempty"`
-	BlockReason   string         `json:"block_reason,omitempty"`
+	SafetyRatings []SafetyRating `json:"safetyRatings,omitempty"`
+	BlockReason   string         `json:"blockReason,omitempty"`
 }
 
 // UsageMetadata contains token count information.
 type UsageMetadata struct {
-	PromptTokenCount     int `json:"prompt_token_count"`
-	CandidatesTokenCount int `json:"candidates_token_count"`
-	TotalTokenCount      int `json:"total_token_count"`
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
 	// CachedContentTokenCount is the number of tokens served from context cache.
 	// Maps to CoreUsage.CachedInputTokens.
-	CachedContentTokenCount int `json:"cached_content_token_count,omitempty"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
 }
 
 // ============================================================================
@@ -141,23 +141,23 @@ type UsageMetadata struct {
 
 // CachedContentUsageMetadata contains token count info for a CachedContent resource.
 type CachedContentUsageMetadata struct {
-	TotalTokenCount int `json:"totalToken_count"`
+	TotalTokenCount int `json:"totalTokenCount"`
 }
 
 // CachedContent represents a Google Gemini CachedContent resource.
 type CachedContent struct {
 	Name              string                      `json:"name,omitempty"`
 	Model             string                      `json:"model"`
-	DisplayName       string                      `json:"display_name,omitempty"`
+	DisplayName       string                      `json:"displayName,omitempty"`
 	Contents          []Content                   `json:"contents"`
-	SystemInstruction *Content                    `json:"system_instruction,omitempty"`
+	SystemInstruction *Content                    `json:"systemInstruction,omitempty"`
 	Tools             []Tool                      `json:"tools,omitempty"`
-	ToolConfig        json.RawMessage             `json:"tool_config,omitempty"`
+	ToolConfig        json.RawMessage             `json:"toolConfig,omitempty"`
 	TTL               string                      `json:"ttl,omitempty"`
-	ExpireTime        string                      `json:"expire_time,omitempty"`
-	CreateTime        string                      `json:"create_time,omitempty"`
-	UpdateTime        string                      `json:"update_time,omitempty"`
-	UsageMetadata     *CachedContentUsageMetadata `json:"usage_metadata,omitempty"`
+	ExpireTime        string                      `json:"expireTime,omitempty"`
+	CreateTime        string                      `json:"createTime,omitempty"`
+	UpdateTime        string                      `json:"updateTime,omitempty"`
+	UsageMetadata     *CachedContentUsageMetadata `json:"usageMetadata,omitempty"`
 }
 
 // CreateCachedContentRequest is the request body for POST /cachedContents.
@@ -165,6 +165,6 @@ type CreateCachedContentRequest CachedContent
 
 // UpdateCachedContentRequest is the request body for PATCH /cachedContents/{name}.
 type UpdateCachedContentRequest struct {
-	TTL string `json:"ttl"`
-	ExpireTime string `json:"expire_time,omitempty"`
+	TTL        string `json:"ttl"`
+	ExpireTime string `json:"expireTime,omitempty"`
 }

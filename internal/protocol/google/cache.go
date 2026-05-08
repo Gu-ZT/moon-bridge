@@ -46,11 +46,19 @@ func (a *GeminiProviderAdapter) prepareCache(ctx context.Context, geminiReq *Gen
 	// Store key for response processing.
 	a.currentCacheKey = key
 
+	// Build the CachedContent resource name from the key hash (G-05).
+	// key format is "gemini:hexhash", extract hex part for resource name.
+	hexPart := key
+	if len(key) > 7 {
+		hexPart = key[7:]
+	}
+	cachedContentName := "cachedContents/" + hexPart
+
 	// Check registry for existing cached content.
 	if entry, ok := a.registry.Get(key); ok {
 		if entry.State == "warm" && (entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(time.Now())) {
 			log.Debug("gemini cache hit")
-			geminiReq.CachedContent = key
+			geminiReq.CachedContent = cachedContentName
 			// Per Gemini API constraint: when using cached_content, must clear
 			// system_instruction, tools, and tool_config (they are in the cache).
 			geminiReq.SystemInstruction = nil
@@ -77,8 +85,13 @@ func (a *GeminiProviderAdapter) prepareCache(ctx context.Context, geminiReq *Gen
 		ttl = "3600s"
 	}
 
+	modelName := a.currentModel
+	if modelName == "" {
+		modelName = "gemini-2.5-flash" // fallback
+	}
+
 	cc := &CachedContent{
-		Model:             "models/gemini-2.5-flash", // set dynamically if possible
+		Model:             "models/" + modelName,
 		Contents:          geminiReq.Contents,
 		SystemInstruction: geminiReq.SystemInstruction,
 		Tools:             geminiReq.Tools,
@@ -100,7 +113,7 @@ func (a *GeminiProviderAdapter) prepareCache(ctx context.Context, geminiReq *Gen
 	})
 
 	log.Debug("gemini cache created", "name", result.Name)
-	geminiReq.CachedContent = key
+	geminiReq.CachedContent = result.Name
 	// Clear protocol-constrained fields.
 	geminiReq.SystemInstruction = nil
 	geminiReq.Tools = nil

@@ -53,7 +53,7 @@ func NewClient(cfg ClientConfig) *Client {
 		httpClient = http.DefaultClient
 	}
 	if cfg.Version == "" {
-		cfg.Version = "v1beta"
+		cfg.Version = "v1"
 	}
 	if cfg.Location == "" {
 		cfg.Location = "us-central1"
@@ -155,7 +155,7 @@ func (c *Client) Close() error { return nil }
 func (c *Client) CreateCachedContent(ctx context.Context, cc *CachedContent) (*CachedContent, error) {
 	data, _ := json.Marshal(cc)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/v1beta/cachedContents", bytes.NewReader(data))
+		c.baseURL+"/"+c.version+"/cachedContents", bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create cached content: %w", err)
 	}
@@ -179,7 +179,7 @@ func (c *Client) CreateCachedContent(ctx context.Context, cc *CachedContent) (*C
 // GetCachedContent retrieves a CachedContent resource by name.
 func (c *Client) GetCachedContent(ctx context.Context, name string) (*CachedContent, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/v1beta/"+name, nil)
+		c.baseURL+"/"+c.version+"/"+name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get cached content: %w", err)
 	}
@@ -204,7 +204,7 @@ func (c *Client) UpdateCachedContent(ctx context.Context, name, ttl string) (*Ca
 	reqBody := UpdateCachedContentRequest{TTL: ttl}
 	data, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
-		c.baseURL+"/v1beta/"+name, bytes.NewReader(data))
+		c.baseURL+"/"+c.version+"/"+name, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("update cached content: %w", err)
 	}
@@ -228,7 +228,7 @@ func (c *Client) UpdateCachedContent(ctx context.Context, name, ttl string) (*Ca
 // DeleteCachedContent deletes a CachedContent resource.
 func (c *Client) DeleteCachedContent(ctx context.Context, name string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-		c.baseURL+"/v1beta/"+name, nil)
+		c.baseURL+"/"+c.version+"/"+name, nil)
 	if err != nil {
 		return fmt.Errorf("delete cached content: %w", err)
 	}

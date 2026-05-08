@@ -51,7 +51,7 @@ func NewClient(cfg ClientConfig) *Client {
 	baseURL = strings.TrimRight(baseURL, "/")
 	// Normalize: if base URL already ends with /v1, strip it since
 	// newRequest always appends /v1/chat/completions.
-	if strings.HasSuffix(baseURL, "/v1") {
+	if strings.HasSuffix(baseURL, "/v1") && (len(baseURL) == 3 || baseURL[len(baseURL)-4] == '/') {
 		baseURL = baseURL[:len(baseURL)-3]
 	}
 

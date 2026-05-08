@@ -51,6 +51,9 @@ type Tool struct {
 	Tools              []Tool         `json:"tools,omitempty"`
 	ExternalWebAccess  *bool          `json:"external_web_access,omitempty"`
 	SearchContentTypes []string       `json:"search_content_types,omitempty"`
+	MaxNumResults      int            `json:"max_num_results,omitempty"`
+	DisplayWidth       int            `json:"display_width,omitempty"`
+	DisplayHeight      int            `json:"display_height,omitempty"`
 }
 
 // ============================================================================
@@ -117,11 +120,17 @@ type Usage struct {
 	OutputTokens       int                `json:"output_tokens,omitempty"`
 	TotalTokens        int                `json:"total_tokens"`
 	InputTokensDetails InputTokensDetails `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails OutputTokensDetails `json:"output_tokens_details,omitempty"`
 }
 
 // InputTokensDetails provides detailed input token breakdown.
 type InputTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
+}
+
+// OutputTokensDetails provides detailed output token breakdown.
+type OutputTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 // IncompleteDetails describes why a response was incomplete.

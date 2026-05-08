@@ -326,7 +326,7 @@ func TestGenerateContent_Success(t *testing.T) {
 		}
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello!"}]},"finish_reason":"STOP"}],"usage_metadata":{"prompt_token_count":5,"candidates_token_count":10,"total_token_count":15}}`))
+		w.Write([]byte(`{"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello!"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"totalTokenCount":15}}`))
 	}))
 	defer srv.Close()
 
@@ -520,7 +520,7 @@ func TestStreamGenerateContent_Success(t *testing.T) {
 		flusher.Flush()
 
 		// Second chunk with finish_reason and usage
-		w.Write([]byte("data: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello world\"}]},\"finish_reason\":\"STOP\"}],\"usage_metadata\":{\"prompt_token_count\":5,\"candidates_token_count\":10,\"total_token_count\":15}}\n"))
+		w.Write([]byte("data: {\"candidates\":[{\"index\":0,\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello world\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":10,\"totalTokenCount\":15}}\n"))
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -843,8 +843,8 @@ func TestFromCoreRequest_ToolUseAndToolResult(t *testing.T) {
 	if userParts[0].FunctionResponse == nil {
 		t.Fatal("user Parts[0].FunctionResponse is nil")
 	}
-	if userParts[0].FunctionResponse.Name != "call_abc" {
-		t.Errorf("FunctionResponse.Name = %q, want call_abc", userParts[0].FunctionResponse.Name)
+	if userParts[0].FunctionResponse.Name != "get_weather" {
+		t.Errorf("FunctionResponse.Name = %q, want get_weather", userParts[0].FunctionResponse.Name)
 	}
 }
 
@@ -923,12 +923,12 @@ func TestFromCoreRequest_GenerationConfigMap(t *testing.T) {
 		Model: "test",
 		GenerationConfig: map[string]any{
 			"temperature":       float64(0.7),
-			"top_p":             float64(0.9),
-			"top_k":             float64(40),
-			"max_output_tokens": float64(8192),
-			"stop_sequences":    []any{"\n\n", "**"},
-			"response_mime_type": "text/plain",
-			"candidate_count":   float64(1),
+			"topP":             float64(0.9),
+			"topK":             float64(40),
+			"maxOutputTokens": float64(8192),
+			"stopSequences":    []any{"\n\n", "**"},
+			"responseMimeType": "text/plain",
+			"candidateCount":   float64(1),
 		},
 		Messages: []format.CoreMessage{
 			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}},
@@ -1056,7 +1056,7 @@ func TestFromCoreRequest_ImageContent(t *testing.T) {
 func TestFromCoreRequest_ReasoningBlock(t *testing.T) {
 	adapter := newTestAdapter()
 
-	// Reasoning blocks should be silently skipped in the upstream request.
+	// Reasoning blocks are converted to text parts (Gemini has no native reasoning type).
 	coreReq := &format.CoreRequest{
 		Model: "test",
 		Messages: []format.CoreMessage{
@@ -1081,12 +1081,15 @@ func TestFromCoreRequest_ReasoningBlock(t *testing.T) {
 	}
 	geminiReq := result.(*google.GenerateContentRequest)
 
-	// Assistant message should have 1 part (reasoning block skipped)
-	if len(geminiReq.Contents[0].Parts) != 1 {
-		t.Fatalf("assistant Parts: got %d, want 1 (reasoning block should be skipped)", len(geminiReq.Contents[0].Parts))
+	// Assistant message should have 2 parts (reasoning converted to text).
+	if len(geminiReq.Contents[0].Parts) != 2 {
+		t.Fatalf("assistant Parts: got %d, want 2 (reasoning block converted to text)", len(geminiReq.Contents[0].Parts))
 	}
-	if geminiReq.Contents[0].Parts[0].Text != "final answer" {
-		t.Errorf("assistant text = %q, want final answer", geminiReq.Contents[0].Parts[0].Text)
+	if geminiReq.Contents[0].Parts[0].Text != "thinking step by step" {
+		t.Errorf("assistant parts[0] reasoning text = %q, want thinking step by step", geminiReq.Contents[0].Parts[0].Text)
+	}
+	if geminiReq.Contents[0].Parts[1].Text != "final answer" {
+		t.Errorf("assistant parts[1] text = %q, want final answer", geminiReq.Contents[0].Parts[1].Text)
 	}
 }
 
@@ -1665,12 +1668,12 @@ func TestFromCoreRequest_GenerationConfigMap_TypeVariants(t *testing.T) {
 		Model: "test",
 		GenerationConfig: map[string]any{
 			"temperature":       int(8) / 10, // int → toFloat64
-			"top_p":             json.Number("0.85"), // json.Number → toFloat64
-			"max_output_tokens": int(4096), // json.Number → toInt
-			"candidate_count":   json.Number("2"),
+			"topP":             json.Number("0.85"), // json.Number → toFloat64
+			"maxOutputTokens": int(4096), // json.Number → toInt
+			"candidateCount":   json.Number("2"),
 			"candidate_count_int64": int64(1), // int64 → toInt
-			"stop_sequences":    []string{"END"}, // []string → toStringSlice
-			"response_mime_type": "application/json",
+			"stopSequences":    []string{"END"}, // []string → toStringSlice
+			"responseMimeType": "application/json",
 		},
 		Messages: []format.CoreMessage{
 			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}},
@@ -1714,7 +1717,7 @@ func TestFromCoreRequest_GenerationConfigMap_DefaultBranch(t *testing.T) {
 		Model: "test",
 		GenerationConfig: map[string]any{
 			"temperature":       "invalid", // string → toFloat64 default → false → skipped
-			"max_output_tokens": "invalid", // string → toInt default → false → skipped
+			"maxOutputTokens": "invalid", // string → toInt default → false → skipped
 			"unknown_key":       "should be ignored",
 		},
 		Messages: []format.CoreMessage{
@@ -1959,13 +1962,13 @@ func TestClient_NewClientDefaults(t *testing.T) {
 	client := google.NewClient(google.ClientConfig{
 		BaseURL: srv.URL,
 		APIKey:  "test-key",
-		// Version and Location omitted — should use defaults "v1beta" and "us-central1"
+		// Version and Location omitted — should use defaults "v1" and "us-central1"
 		// Client omitted — should use http.DefaultClient
 	})
 
 	_, _ = client.GenerateContent(context.Background(), "gemini-2.0-flash", &google.GenerateContentRequest{})
 
-	if !strings.Contains(capturedURL, "/v1beta/models/gemini-2.0-flash:generateContent") {
+	if !strings.Contains(capturedURL, "/v1/models/gemini-2.0-flash:generateContent") {
 		t.Errorf("URL = %s, missing default version in path", capturedURL)
 	}
 }
@@ -2016,8 +2019,8 @@ func TestFromCoreRequest_GenerationConfigMap_Int64AndDefault(t *testing.T) {
 	coreReq := &format.CoreRequest{
 		Model: "test",
 		GenerationConfig: map[string]any{
-			"top_k":          int64(30),          // int64 → toFloat64
-			"stop_sequences": 42,                 // int (not []any or []string) → toStringSlice default
+			"topK":          int64(30),          // int64 → toFloat64
+			"stopSequences": 42,                 // int (not []any or []string) → toStringSlice default
 		},
 		Messages: []format.CoreMessage{
 			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}},
