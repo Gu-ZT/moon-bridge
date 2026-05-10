@@ -125,6 +125,7 @@ func (s *Server) executeChatSearchLoop(
 		for _, tc := range msg.ToolCalls {
 			switch tc.Function.Name {
 			case "tavily_search", "firecrawl_fetch":
+				searchCalls = append(searchCalls, tc)
 			case "web_search", "web_search_preview":
 				searchCalls = append(searchCalls, tc)
 			default:
@@ -169,13 +170,17 @@ func executeChatSearchCall(
 	firecrawl *websearch.FirecrawlClient,
 	tc chat.ToolCall,
 ) (string, error) {
+	// Chat API returns function.arguments as a JSON string. When decoded as
+	// json.RawMessage, the outer quotes are preserved. Unquote before parsing.
+	args := unquoteRawJSON(tc.Function.Arguments)
+
 	switch tc.Function.Name {
 	case "tavily_search", "web_search", "web_search_preview":
 		var params struct {
 			Query      string `json:"query"`
 			MaxResults int    `json:"max_results"`
 		}
-		if err := json.Unmarshal(tc.Function.Arguments, &params); err != nil {
+		if err := json.Unmarshal(args, &params); err != nil {
 			return "", fmt.Errorf("parse search params: %w", err)
 		}
 		if params.Query == "" {
@@ -197,7 +202,7 @@ func executeChatSearchCall(
 		var params struct {
 			URL string `json:"url"`
 		}
-		if err := json.Unmarshal(tc.Function.Arguments, &params); err != nil {
+		if err := json.Unmarshal(args, &params); err != nil {
 			return "", fmt.Errorf("parse fetch params: %w", err)
 		}
 		if params.URL == "" {
@@ -517,6 +522,7 @@ func (s *Server) chatSearchBufferedStream(
 		for _, tc := range toolCalls {
 			switch tc.Function.Name {
 			case "tavily_search", "firecrawl_fetch":
+				searchCalls = append(searchCalls, tc)
 			case "web_search", "web_search_preview":
 				searchCalls = append(searchCalls, tc)
 			default:
@@ -620,4 +626,20 @@ func collectChatStreamReasoning(events []chat.ChatStreamChunk) string {
 		}
 	}
 	return sb.String()
+}
+
+
+// unquoteRawJSON unwraps a JSON-string-encoded value.
+// Chat API returns function.arguments as a quoted JSON string. When stored as
+// json.RawMessage, the outer quotes are preserved. This function strips them
+// so the result is a raw JSON object ready for json.Unmarshal.
+func unquoteRawJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) < 2 || raw[0] != '"' {
+		return raw
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return raw
+	}
+	return json.RawMessage(s)
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/extension/websearchinjected"
 	"moonbridge/internal/config"
 	"moonbridge/internal/session"
 	"moonbridge/internal/protocol/anthropic"
@@ -166,6 +168,11 @@ func (s *Server) handleWithAdapters(
 	// Override CoreRequest model alias with upstream model name so
 	// the upstream provider receives the correct model identifier.
 	coreReq.Model = preferred.UpstreamModel
+
+	// Inject web search tools at Core level if mode is "injected".
+	// This replaces web_search with tavily_search/firecrawl_fetch tools.
+	wsInjected := s.injectCoreWebSearch(ctx, coreReq, preferred, openAIReq)
+
 	upstreamAny, err := providerAdapter.FromCoreRequest(ctx, coreReq)
 	if err != nil {
 		log.Error("adapter path: FromCoreRequest failed", "error", err)
@@ -213,7 +220,7 @@ func (s *Server) handleWithAdapters(
 
 		// If streaming, use streaming path.
 		if openAIReq.Stream {
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, upstreamReq, preferred)
+			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, upstreamReq, preferred, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -234,6 +241,18 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+
+			// Wrap provider with search orchestrator if web search is "injected".
+			if wsInjected {
+				if acc, ok := effectiveProvider.(provider.AnthropicClientAccessor); ok && s.runtime != nil {
+					cfgC := s.runtime.Current().Config
+					wrapped := websearchinjected.WrapProvider(
+						acc.AnthropicClient(),
+						cfgC.TavilyAPIKey, cfgC.FirecrawlAPIKey, s.maxSearchRounds(),
+					)
+					effectiveProvider = &searchProviderAdapter{wrapped: wrapped}
+				}
+			}
 
 			// Wrap with visual orchestrator at Core level if enabled for this model.
 			// This uses CoreProvider, which is protocol-agnostic.
@@ -297,7 +316,7 @@ func (s *Server) handleWithAdapters(
 		}
 
 		if openAIReq.Stream {
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, chatReq, preferred)
+			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, chatReq, preferred, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -335,8 +354,7 @@ func (s *Server) handleWithAdapters(
 
 		record.ChatRequest = chatReq
 		var chatResp *chat.ChatResponse
-		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			injectChatSearchTools(chatReq, s.runtime.Current().Config.FirecrawlAPIKey)
+		if wsInjected {
 			chatResp, err = s.executeChatSearchLoop(ctx, chatClient, chatReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			chatResp, err = chatClient.CreateChat(ctx, chatReq)
@@ -405,7 +423,7 @@ func (s *Server) handleWithAdapters(
 		}
 
 		if openAIReq.Stream {
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, googleReq, preferred)
+			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, googleReq, preferred, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -443,8 +461,7 @@ func (s *Server) handleWithAdapters(
 
 		record.UpstreamRequest = googleReq
 		var googleResp *google.GenerateContentResponse
-		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			injectGoogleSearchTools(googleReq, s.runtime.Current().Config.FirecrawlAPIKey)
+		if wsInjected {
 			googleResp, err = s.executeGoogleSearchLoop(ctx, googleClient, preferred.UpstreamModel, googleReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			googleResp, err = googleClient.GenerateContent(ctx, preferred.UpstreamModel, googleReq)
@@ -622,6 +639,7 @@ func (s *Server) handleAdapterStream(
 	coreReq *format.CoreRequest,
 	upstreamReq any,
 	candidate provider.ProviderCandidate,
+	wsInjected bool,
 ) {
 	log := slog.Default().With("model", openAIReq.Model, "path", "adapter_stream")
 
@@ -815,8 +833,7 @@ func (s *Server) handleAdapterStream(
 		streamRecord.ChatRequest = chatReq
 		var chatStream <-chan chat.ChatStreamChunk
 		var err error
-		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(candidate.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			injectChatSearchTools(chatReq, s.runtime.Current().Config.FirecrawlAPIKey)
+		if wsInjected {
 			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			chatStream, err = chatClient.StreamChat(ctx, chatReq)
@@ -1276,6 +1293,111 @@ func (s *Server) wrapWithVisual(
 
 	return visualpkg.NewCoreBridge(upstreamCP, visCP, visCfg.Model, visCfg.MaxRounds, visCfg.MaxTokens)
 }
+
+
+// injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
+// tavily_search/firecrawl_fetch tools when the provider's web search mode is "injected".
+// Returns true if injection was applied.
+func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRequest, preferred provider.ProviderCandidate, openAIReq openai.ResponsesRequest) bool {
+	if s.providerMgr == nil {
+		return false
+	}
+	wsMode := s.providerMgr.ResolvedWebSearch(preferred.ProviderKey)
+	if wsMode != "injected" && wsMode != "auto" {
+		return false
+	}
+	// For "auto" mode, check if keys are configured (fallback to injected).
+	if wsMode == "auto" && s.runtime != nil {
+		cfg := s.runtime.Current().Config
+		if cfg.TavilyAPIKey == "" && cfg.FirecrawlAPIKey == "" {
+			return false // no keys configured for "auto" fallback
+		}
+	}
+	// Check if the request has a web_search tool.
+	hasWebSearch := false
+	for _, t := range openAIReq.Tools {
+		if t.Type == "web_search" || t.Type == "web_search_preview" {
+			hasWebSearch = true
+			break
+		}
+	}
+	if !hasWebSearch {
+		return false
+	}
+	// Replace coreReq.Tools: keep non-web_search tools, add injected search tools.
+	filtered := make([]format.CoreTool, 0, len(coreReq.Tools)+2)
+	for _, t := range coreReq.Tools {
+		if t.Name != "web_search" {
+			filtered = append(filtered, t)
+		}
+	}
+	cfg := s.runtime.Current().Config
+	injected := websearchinjected.CoreTools(cfg.FirecrawlAPIKey)
+	filtered = append(filtered, injected...)
+	coreReq.Tools = filtered
+	// Set tool_choice to auto so the model has freedom to call tavily_search.
+	if coreReq.ToolChoice == nil {
+		coreReq.ToolChoice = &format.CoreToolChoice{Mode: "auto"}
+	}
+	return true
+}
+
+// searchProvider wraps the websearchinjected orchestrator's behavior.
+type searchProvider interface {
+	CreateMessage(ctx context.Context, req anthropic.MessageRequest) (anthropic.MessageResponse, error)
+	StreamMessage(ctx context.Context, req anthropic.MessageRequest) (anthropic.Stream, error)
+}
+
+// searchProviderAdapter adapts searchProvider to provider.ProviderClient.
+type searchProviderAdapter struct {
+	wrapped searchProvider
+}
+
+func (a *searchProviderAdapter) CreateMessage(ctx context.Context, req any) (any, error) {
+	msgReq, ok := req.(anthropic.MessageRequest)
+	if !ok {
+		ptr, ok2 := req.(*anthropic.MessageRequest)
+		if !ok2 {
+			return nil, fmt.Errorf("search adapter: unexpected request type %T", req)
+		}
+		msgReq = *ptr
+	}
+	return a.wrapped.CreateMessage(ctx, msgReq)
+}
+
+func (a *searchProviderAdapter) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
+	msgReq, ok := req.(anthropic.MessageRequest)
+	if !ok {
+		ptr, ok2 := req.(*anthropic.MessageRequest)
+		if !ok2 {
+			return nil, fmt.Errorf("search adapter: unexpected request type %T", req)
+		}
+		msgReq = *ptr
+	}
+	stream, err := a.wrapped.StreamMessage(ctx, msgReq)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan any)
+	go func() {
+		defer close(out)
+		defer stream.Close()
+		for {
+			ev, err := stream.Next()
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				return
+			}
+			out <- ev
+		}
+	}()
+	return out, nil
+}
+
+func (a *searchProviderAdapter) AnthropicClient() *anthropic.Client { return nil }
+
 
 // injectAnthropicWebSearch adds the Anthropic web_search_20250305 server tool
 // to an anthropic.MessageRequest if not already present.
