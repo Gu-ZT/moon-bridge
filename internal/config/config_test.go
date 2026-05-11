@@ -585,8 +585,17 @@ routes:
 	}
 	route := cfg.RouteFor("gpt-test")
 	// Route DisplayName/Description come from model def in new format.
-	if route.DisplayName != "Claude Test" {
-		t.Fatalf("DisplayName = %q, want \"Claude Test\"", route.DisplayName)
+	// Route DisplayName is NOT inherited from model def — empty unless explicitly configured.
+	if route.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want empty (not inherited from model def)", route.DisplayName)
+	}
+	// Route DisplayName is NOT inherited from model def — empty unless explicitly configured.
+	if route.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want empty (not inherited from model def)", route.DisplayName)
+	}
+	// Route DisplayName is NOT inherited from model def — empty unless explicitly configured.
+	if route.DisplayName != "" {
+		t.Fatalf("DisplayName = %q, want empty (not inherited from model def)", route.DisplayName)
 	}
 	if route.Description != "A test model" {
 		t.Fatalf("Description = %q, want \"A test model\"", route.Description)
@@ -989,5 +998,79 @@ routes:
 	}
 	if cfg.RouteFor("gpt-test").ContextWindow != 200000 {
 		t.Fatalf("Route ContextWindow = %d", cfg.RouteFor("gpt-test").ContextWindow)
+	}
+}
+
+func TestRouteDisplayNameNotInheritedFromModelDef(t *testing.T) {
+	// Regression: route should NOT inherit display_name from the underlying model def.
+	// Multiple routes pointing to the same model must each have their own display_name
+	// derived from the alias slug (by downstream consumers like BuildModelInfoFromRoute).
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+models:
+  deepseek-v4-pro:
+    context_window: 1000000
+    display_name: "DeepSeek V4 Pro"
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/anthropic
+    api_key: test
+    offers:
+      - model: deepseek-v4-pro
+routes:
+  gpt-5.4:
+    model: deepseek-v4-pro
+    provider: deepseek
+  gpt-5.5:
+    model: deepseek-v4-pro
+    provider: deepseek
+  codex-auto-review:
+    model: deepseek-v4-pro
+    provider: deepseek
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+
+	// All three routes should have empty DisplayName (not inherited from model def).
+	for _, alias := range []string{"gpt-5.4", "gpt-5.5", "codex-auto-review"} {
+		route := cfg.RouteFor(alias)
+		if route.DisplayName != "" {
+			t.Fatalf("route %q: DisplayName = %q, want empty (not inherited from model def)", alias, route.DisplayName)
+		}
+	}
+
+	// Verify other metadata IS still inherited (context_window, etc.)
+	route := cfg.RouteFor("gpt-5.4")
+	if route.ContextWindow == 0 || route.ContextWindow != 1000000 {
+		t.Fatalf("route gpt-5.4: ContextWindow = %d, want 1000000", route.ContextWindow)
+	}
+}
+
+func TestRouteExplicitDisplayNameStillWorks(t *testing.T) {
+	// Routes with explicit display_name in config should keep it.
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+models:
+  my-model:
+    display_name: "Model Default Name"
+providers:
+  main:
+    base_url: https://example.test
+    api_key: test
+    offers:
+      - model: my-model
+routes:
+  custom-alias:
+    model: my-model
+    provider: main
+    display_name: "My Custom Display Name"
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	route := cfg.RouteFor("custom-alias")
+	if route.DisplayName != "My Custom Display Name" {
+		t.Fatalf("DisplayName = %q, want \"My Custom Display Name\"", route.DisplayName)
 	}
 }

@@ -519,3 +519,34 @@ func TestBuildModelInfoFromRouteAutoDisplayName(t *testing.T) {
 		t.Fatalf("DisplayName = %q, want GPT 5.5 Codex", info.DisplayName)
 	}
 }
+
+func TestBuildModelInfoFromRouteDifferentAliasesSameModel(t *testing.T) {
+	// Regression: multiple route aliases pointing to the same underlying model
+	// must produce different DisplayNames derived from their alias slugs.
+	aliases := []struct {
+		alias string
+		want  string
+	}{
+		{"gpt-5.4", "GPT 5.4"},
+		{"gpt-5.5", "GPT 5.5"},
+		{"codex-auto-review", "Codex Auto Review"},
+		{"gpt-5.4-mini", "GPT 5.4 Mini"},
+		{"gpt-5.3-codex", "GPT 5.3 Codex"},
+	}
+	for _, tc := range aliases {
+		// RouteEntry with empty DisplayName (no explicit config) should fall back to slug.
+		info := codex.BuildModelInfoFromRoute(tc.alias, "", config.RouteEntry{})
+		if info.DisplayName != tc.want {
+			t.Fatalf("BuildModelInfoFromRoute(%q) DisplayName = %q, want %q", tc.alias, info.DisplayName, tc.want)
+		}
+	}
+}
+
+func TestBuildModelInfoForProviderModelsPreserveDisplayName(t *testing.T) {
+	// Provider model entries should keep their original display_name from model config.
+	meta := config.ModelMeta{DisplayName: "DeepSeek V4 Pro"}
+	info := codex.BuildModelInfoFromProviderModel("deepseek-v4-pro", "", meta)
+	if info.DisplayName != "DeepSeek V4 Pro" {
+		t.Fatalf("DisplayName = %q, want \"DeepSeek V4 Pro\"", info.DisplayName)
+	}
+}

@@ -725,7 +725,7 @@ func buildRoutes(rawRoutes map[string]RouteFileConfig, providerDefs map[string]P
 		if modelDef, ok := models[modelSlug]; ok {
 			entry.ContextWindow = modelDef.ContextWindow
 			entry.MaxOutputTokens = modelDef.MaxOutputTokens
-			entry.DisplayName = modelDef.DisplayName
+			_ = modelDef.DisplayName // route DisplayName comes from explicit config, not model def
 			entry.Description = modelDef.Description
 			entry.BaseInstructions = modelDef.BaseInstructions
 			entry.DefaultReasoningLevel = modelDef.DefaultReasoningLevel

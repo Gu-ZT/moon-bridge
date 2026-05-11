@@ -175,7 +175,11 @@ func (s *Server) listModels() []map[string]any {
 	for alias, route := range routes {
 		displayName := route.DisplayName
 		if displayName == "" {
-			displayName = alias
+			// When no explicit display_name is configured for this route,
+			// derive from the alias slug (e.g. "gpt-5.4" -> "GPT 5.4").
+			// This avoids inheriting the underlying model's DisplayName,
+			// which would cause duplicates when multiple routes point to the same model.
+			displayName = slugDisplayName(alias)
 		}
 		models = append(models, map[string]any{
 			"slug":     alias,
@@ -250,6 +254,24 @@ func computeCostWithProviderPricing(pm *provider.ProviderManager, stats *stats.S
 		}
 	}
 	return stats.ComputeBillingCost(requestModel, usage)
+}
+
+
+
+// slugDisplayName converts a route alias slug to a human-readable display name.
+// e.g. "gpt-5.4" -> "GPT 5.4", "codex-auto-review" -> "Codex Auto Review"
+func slugDisplayName(slug string) string {
+	slug = strings.ReplaceAll(slug, "-", " ")
+	words := strings.Fields(slug)
+	for i, w := range words {
+		lower := strings.ToLower(w)
+		if len(lower) >= 3 && lower[:3] == "gpt" {
+			words[i] = "GPT" + w[3:]
+			continue
+		}
+		words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+	}
+	return strings.Join(words, " ")
 }
 
 func checkAuth(r *http.Request, expectedToken string) bool {
