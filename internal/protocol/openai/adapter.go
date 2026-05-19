@@ -1568,6 +1568,8 @@ func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
 			Description: "Use a computer to perform actions.",
 			Extensions:  ext,
 		}}
+	case "image_generation":
+		return nil
 
 	case "namespace":
 		ns := namespacedToolName(namespace, tool.Name)

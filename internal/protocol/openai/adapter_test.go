@@ -89,6 +89,37 @@ func TestToCoreRequest_AppendsInjectedTools(t *testing.T) {
 	}
 }
 
+func TestToCoreRequest_SkipsImageGenerationTool(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	req := &openai.ResponsesRequest{
+		Model: "deepseek-v4-flash",
+		Input: json.RawMessage(`"draw something"`),
+		Tools: []openai.Tool{
+			{Type: "function", Name: "exec_command", Description: "Run a command"},
+			{Type: "image_generation"},
+			{Type: "web_search"},
+		},
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Tools) != 2 {
+		t.Fatalf("got %d tools, want 2: %+v", len(result.Tools), result.Tools)
+	}
+	for _, tool := range result.Tools {
+		if tool.Name == "" {
+			t.Fatalf("unexpected empty tool name in %+v", result.Tools)
+		}
+	}
+	if result.Tools[0].Name != "exec_command" || result.Tools[1].Name != "web_search" {
+		t.Fatalf("tools = %+v, want exec_command and web_search", result.Tools)
+	}
+}
+
 func TestToCoreRequest_FunctionCallOutputImage(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
@@ -294,8 +325,8 @@ func TestToCoreRequest_BatchesCustomToolCallsAndOutputsIntoSingleRound(t *testin
 	for i, want := range []struct {
 		assistantTextIdx int
 		msgIdx           int
-		callID  string
-		outcome string
+		callID           string
+		outcome          string
 	}{
 		{0, 1, "call_a", "ok a"},
 		{3, 4, "call_b", "ok b"},

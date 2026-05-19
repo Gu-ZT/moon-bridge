@@ -201,6 +201,7 @@ func (server *Server) writeTrace(record mbtrace.Record) {
 			ChatRequest:      record.ChatRequest,
 			ChatResponse:     record.ChatResponse,
 			ChatStreamEvents: record.ChatStreamEvents,
+			Sanitization:     record.Sanitization,
 			Error:            record.Error,
 		})
 	}

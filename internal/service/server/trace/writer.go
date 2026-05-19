@@ -24,8 +24,8 @@ type Writer interface {
 
 // FileWriter implements Writer by delegating to a *mbtrace.Tracer.
 type FileWriter struct {
-	tracer      *mbtrace.Tracer
-	errors      io.Writer
+	tracer *mbtrace.Tracer
+	errors io.Writer
 }
 
 // NewFileWriter creates a new FileWriter.
@@ -47,6 +47,7 @@ func (w *FileWriter) WriteTrace(record mbtrace.Record) {
 			ChatRequest:      record.ChatRequest,
 			ChatResponse:     record.ChatResponse,
 			ChatStreamEvents: record.ChatStreamEvents,
+			Sanitization:     record.Sanitization,
 			Error:            record.Error,
 		})
 	}

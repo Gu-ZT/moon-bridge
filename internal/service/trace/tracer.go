@@ -50,6 +50,7 @@ type Record struct {
 	AnthropicStreamEvents any         `json:"anthropic_stream_events,omitempty"`
 	OpenAIResponse        any         `json:"openai_response,omitempty"`
 	OpenAIStreamEvents    any         `json:"openai_stream_events,omitempty"`
+	Sanitization          any         `json:"sanitization,omitempty"`
 	Error                 any         `json:"error,omitempty"`
 }
 

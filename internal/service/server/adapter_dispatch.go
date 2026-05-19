@@ -337,6 +337,7 @@ func (s *Server) handleWithAdapters(
 			record.OpenAIRequest = nil
 			return
 		}
+		record.Sanitization = sanitizeChatRequestBeforeSend(chatReq)
 
 		chatClientRaw := s.activeChatClient(preferred.ProviderKey)
 		if chatClientRaw == nil {
@@ -1034,6 +1035,7 @@ func (s *Server) handleAdapterStream(
 		if s.pluginRegistry != nil && sess != nil {
 			prependCachedReasoningForChat(chatReq, sess)
 		}
+		streamRecord.Sanitization = sanitizeChatRequestBeforeSend(chatReq)
 
 		chatClientRaw := s.activeChatClient(candidate.ProviderKey)
 		if chatClientRaw == nil {
@@ -1551,6 +1553,73 @@ func (s *Server) adapterRegistryProvider(protocol string) format.ProviderAdapter
 	}
 	adapter, _ := s.adapterRegistry.GetProvider(protocol)
 	return adapter
+}
+
+type chatRequestSanitization struct {
+	RemovedTools        []removedChatTool `json:"removed_tools,omitempty"`
+	OriginalToolChoice  any               `json:"original_tool_choice,omitempty"`
+	SanitizedToolChoice string            `json:"sanitized_tool_choice,omitempty"`
+}
+
+type removedChatTool struct {
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
+	Name   string `json:"name,omitempty"`
+}
+
+func sanitizeChatRequestBeforeSend(req *chat.ChatRequest) any {
+	if req == nil {
+		return nil
+	}
+
+	removed := make([]removedChatTool, 0)
+	validNames := make(map[string]bool, len(req.Tools))
+	filteredTools := make([]chat.ChatTool, 0, len(req.Tools))
+	for i, tool := range req.Tools {
+		if tool.Type == "function" && tool.Function.Name == "" {
+			removed = append(removed, removedChatTool{
+				Index:  i,
+				Reason: "empty_function_name",
+			})
+			continue
+		}
+		if tool.Function.Name != "" {
+			validNames[tool.Function.Name] = true
+		}
+		filteredTools = append(filteredTools, tool)
+	}
+	req.Tools = filteredTools
+
+	report := chatRequestSanitization{RemovedTools: removed}
+	name, ok := chatToolChoiceFunctionName(req.ToolChoice)
+	if ok && !validNames[name] {
+		report.OriginalToolChoice = json.RawMessage(append([]byte(nil), req.ToolChoice...))
+		report.SanitizedToolChoice = "auto"
+		req.ToolChoice = json.RawMessage(`"auto"`)
+	}
+	if len(report.RemovedTools) == 0 && report.SanitizedToolChoice == "" {
+		return nil
+	}
+	return report
+}
+
+func chatToolChoiceFunctionName(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var obj struct {
+		Type     string `json:"type"`
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", false
+	}
+	if obj.Type != "function" {
+		return "", false
+	}
+	return obj.Function.Name, true
 }
 
 func (s *Server) writeCoreResponseAsOpenAIStream(

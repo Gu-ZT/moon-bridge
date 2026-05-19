@@ -7,6 +7,7 @@ import (
 
 	"moonbridge/internal/config"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/chat"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/runtime"
@@ -83,6 +84,82 @@ func TestCoreResponseToCoreStreamEmitsUsageOnCompleted(t *testing.T) {
 	}
 	if !sawToolArgsDone {
 		t.Fatal("missing tool args done event")
+	}
+}
+
+func TestSanitizeChatRequestBeforeSendRemovesEmptyFunctionTools(t *testing.T) {
+	req := &chat.ChatRequest{
+		Model: "deepseek-v4-flash",
+		Tools: []chat.ChatTool{
+			{Type: "function", Function: chat.FunctionDef{Name: "exec_command"}},
+			{Type: "function", Function: chat.FunctionDef{Name: ""}},
+			{Type: "function", Function: chat.FunctionDef{Name: "web_search"}},
+		},
+		ToolChoice: json.RawMessage(`{"type":"function","function":{"name":""}}`),
+	}
+
+	report, ok := sanitizeChatRequestBeforeSend(req).(chatRequestSanitization)
+	if !ok {
+		t.Fatalf("sanitization report type = %T, want chatRequestSanitization", report)
+	}
+	if len(req.Tools) != 2 {
+		t.Fatalf("tools: got %d, want 2: %+v", len(req.Tools), req.Tools)
+	}
+	if req.Tools[0].Function.Name != "exec_command" || req.Tools[1].Function.Name != "web_search" {
+		t.Fatalf("tools = %+v, want exec_command and web_search", req.Tools)
+	}
+	if len(report.RemovedTools) != 1 || report.RemovedTools[0].Index != 1 || report.RemovedTools[0].Reason != "empty_function_name" {
+		t.Fatalf("removed tools = %+v", report.RemovedTools)
+	}
+	if string(req.ToolChoice) != `"auto"` {
+		t.Fatalf("tool_choice = %s, want auto", string(req.ToolChoice))
+	}
+	if report.SanitizedToolChoice != "auto" || report.OriginalToolChoice == nil {
+		t.Fatalf("report = %+v", report)
+	}
+}
+
+func TestSanitizeChatRequestBeforeSendLeavesValidRequestUnchanged(t *testing.T) {
+	req := &chat.ChatRequest{
+		Model: "deepseek-v4-flash",
+		Tools: []chat.ChatTool{
+			{Type: "function", Function: chat.FunctionDef{Name: "exec_command"}},
+		},
+		ToolChoice: json.RawMessage(`{"type":"function","function":{"name":"exec_command"}}`),
+	}
+
+	if report := sanitizeChatRequestBeforeSend(req); report != nil {
+		t.Fatalf("report = %+v, want nil", report)
+	}
+	if len(req.Tools) != 1 || req.Tools[0].Function.Name != "exec_command" {
+		t.Fatalf("tools = %+v", req.Tools)
+	}
+	if string(req.ToolChoice) != `{"type":"function","function":{"name":"exec_command"}}` {
+		t.Fatalf("tool_choice changed to %s", string(req.ToolChoice))
+	}
+}
+
+func TestSanitizeChatRequestBeforeSendSanitizesMissingToolChoice(t *testing.T) {
+	req := &chat.ChatRequest{
+		Model: "deepseek-v4-flash",
+		Tools: []chat.ChatTool{
+			{Type: "function", Function: chat.FunctionDef{Name: "exec_command"}},
+		},
+		ToolChoice: json.RawMessage(`{"type":"function","function":{"name":"missing_tool"}}`),
+	}
+
+	report, ok := sanitizeChatRequestBeforeSend(req).(chatRequestSanitization)
+	if !ok {
+		t.Fatalf("sanitization report type = %T, want chatRequestSanitization", report)
+	}
+	if len(report.RemovedTools) != 0 {
+		t.Fatalf("removed tools = %+v, want none", report.RemovedTools)
+	}
+	if string(req.ToolChoice) != `"auto"` {
+		t.Fatalf("tool_choice = %s, want auto", string(req.ToolChoice))
+	}
+	if report.SanitizedToolChoice != "auto" || report.OriginalToolChoice == nil {
+		t.Fatalf("report = %+v", report)
 	}
 }
 
