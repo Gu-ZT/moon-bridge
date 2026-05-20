@@ -168,10 +168,19 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	case config.AuthTypeTransform:
 		// In transform mode, extract the user's Bearer token and forward it
 		// to the upstream provider instead of the configured api_key.
-		if token := extractBearerToken(request); token != "" {
-			ctx := config.WithTransformAuthToken(request.Context(), token)
-			request = request.WithContext(ctx)
+		token := extractBearerToken(request)
+		if token == "" {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(writer).Encode(openai.ErrorResponse{Error: openai.ErrorObject{
+				Message: "在 transform 模式下需要提供 Authorization: Bearer <token>",
+				Type:    "authentication_error",
+				Code:    "invalid_auth",
+			}})
+			return
 		}
+		ctx := config.WithTransformAuthToken(request.Context(), token)
+		request = request.WithContext(ctx)
 	default:
 		// authentication mode (default): verify Bearer token against auth_token.
 		if cfg.AuthToken != "" {
@@ -334,11 +343,7 @@ func slugDisplayName(slug string) string {
 }
 
 func checkAuth(r *http.Request, expectedToken string) bool {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
-	}
-	return strings.TrimSpace(auth[7:]) == expectedToken
+	return extractBearerToken(r) == expectedToken
 }
 
 // extractBearerToken extracts the Bearer token from an Authorization header.

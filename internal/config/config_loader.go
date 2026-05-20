@@ -349,11 +349,16 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 	responseProxy := FromResponseProxyFileConfig(fileConfig.Proxy.Response)
 	anthropicProxy := FromAnthropicProxyFileConfig(fileConfig.Proxy.Anthropic)
 
+	authType, err := parseAuthType(fileConfig.Server.AuthType)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Mode:             mode,
 		Addr:             valueOrDefault(strings.TrimSpace(fileConfig.Server.Addr), DefaultAddr),
 		AuthToken:        strings.TrimSpace(fileConfig.Server.AuthToken),
-		AuthType:         parseAuthType(fileConfig.Server.AuthType),
+		AuthType:         authType,
 		MaxSessions:      intOrDefault(fileConfig.Server.MaxSessions, 0),
 		SessionTTL:       valueOrDefault(strings.TrimSpace(fileConfig.Server.SessionTTL), "24h"),
 		TraceRequests:    traceEnabled,
@@ -788,12 +793,18 @@ func parseMode(value string) (Mode, error) {
 	}
 }
 
-func parseAuthType(value string) AuthType {
-	switch AuthType(strings.TrimSpace(value)) {
+func parseAuthType(value string) (AuthType, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return AuthTypeAuthentication, nil
+	}
+	switch AuthType(trimmed) {
 	case AuthTypeTransform:
-		return AuthTypeTransform
+		return AuthTypeTransform, nil
+	case AuthTypeAuthentication:
+		return AuthTypeAuthentication, nil
 	default:
-		return AuthTypeAuthentication
+		return "", fmt.Errorf("invalid auth_type %q (expected \"authentication\" or \"transform\")", trimmed)
 	}
 }
 
