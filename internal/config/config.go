@@ -312,7 +312,7 @@ func (cfg Config) validateTransform() error {
 		if def.BaseURL == "" {
 			return fmt.Errorf("providers.%s.base_url is required", key)
 		}
-		if def.APIKey == "" {
+		if cfg.AuthType != AuthTypeTransform && def.APIKey == "" {
 			return fmt.Errorf("providers.%s.api_key is required", key)
 		}
 		switch def.Protocol {
