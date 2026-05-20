@@ -337,6 +337,10 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 
 		baseURL := pm.ProviderBaseURL(providerKey)
 		apiKey := pm.ProviderAPIKey(providerKey)
+		// In transform mode, use the user's Bearer token instead of the provider's API key.
+		if token, ok := config.TransformAuthTokenFromContext(request.Context()); ok {
+			apiKey = token
+		}
 		if baseURL == "" {
 			if isLast {
 				log.Error("OpenAI 提供商缺少 base_url")

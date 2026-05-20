@@ -10,6 +10,7 @@ log:
 server:
   addr: "127.0.0.1:38440"
   # Set a Bearer token for API authentication. When non-empty, all requests
+  # auth_type: "transform" | "authentication"(default)
   # must include an Authorization: Bearer <token> header. If empty, auth is disabled.
   # auth_token: "replace-with-your-secret-token"
 
