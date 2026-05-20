@@ -326,6 +326,16 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 	if pm == nil {
 		return
 	}
+	// In transform auth mode, upstream probing is impossible (no api_key configured).
+	// Mark all as "unknown" — web search will be lazily probed on the first
+	// authenticated request that carries a user token via context.
+	if cfg.AuthType == config.AuthTypeTransform {
+		for _, key := range pm.ProviderKeys() {
+			pm.SetResolvedWebSearch(key, "unknown")
+		}
+		slog.Info("transform auth mode: web search deferred (unknown), will probe on first authenticated request")
+		return
+	}
 	// 1. Resolve provider-level defaults.
 	for _, key := range pm.ProviderKeys() {
 		protocol := pm.ProtocolForKey(key)

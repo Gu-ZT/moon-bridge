@@ -325,6 +325,14 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		return
 	}
 
+	// Resolve web search once before the loop (includes lazy probe for transform mode).
+	wsEnabled := false
+	if len(openaiCandidates) > 0 {
+		first := openaiCandidates[0]
+		wsMode := server.resolveWebSearchLazy(request.Context(), pm, first.ProviderKey, first.UpstreamModel, responsesRequest.Model)
+		wsEnabled = wsMode == "enabled"
+	}
+
 	for i, candidate := range openaiCandidates {
 		providerKey := candidate.ProviderKey
 		isLast := i == len(openaiCandidates)-1
@@ -375,7 +383,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		actualModel = candidate.UpstreamModel
 
 		// Inject web_search tool if enabled for this model.
-		if pm.ResolvedWebSearchForModel(responsesRequest.Model) == "enabled" {
+		if wsEnabled {
 			upstreamRequest.Tools = InjectWebSearchTool(upstreamRequest.Tools)
 		}
 
